@@ -11,8 +11,7 @@ y = np.sin(X) + sigma * np.random.standard_normal(dim)
 ##################
 
 kernel = gp.kernels.Matern()
-
-print(kernel.hyperparameters)
+ker = gp.kernels.Matern
 
 reg = gp.GaussianProcessRegressor()
 
