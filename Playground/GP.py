@@ -54,7 +54,7 @@ def w_pCN_step(xi: np.array, y: np.array, beta: float, T: np.array, phi: Callabl
     return xi, accepted
 
 #Calculate the Covariance Matrix and its Cholesky Decomposition
-C = mat.__call__(np.array([X,]).T)
+C = calc_cov_matrix(X, mat)
 T = C #np.linalg.cholesky(C).conj().T
 
 #Run w-pCN
@@ -62,13 +62,20 @@ n_iter = 10000
 xi = np.random.standard_normal(dim)
 accepted = 0
 path = []
+alpha = .5
+beta = .1
+
 for k in range(n_iter):
-    beta = .1
+    
+    ###pcn step
     xi, acc = w_pCN_step(xi, y, beta, T, phi)
     accepted +=acc
     path.append(T@xi)
-
+    ##gibbs step
+    beta_hat =  np.sqrt(1-alpha)**2 * beta + alpha * np.random.rand()
     
+
+
 
 print('Acceptance probability: {0}%'.format(accepted/n_iter*100))
 
