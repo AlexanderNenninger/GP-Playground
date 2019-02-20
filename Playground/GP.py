@@ -5,7 +5,7 @@ import scipy.stats as stats
 import matplotlib.pyplot as plt
 import scipy.special as special
 from sklearn.gaussian_process.kernels import Matern
-
+from sklearn.gaussian_process.kernels import Kernel
 
 
 dim = 100
@@ -21,27 +21,23 @@ y = np.sin(X) + sigma * np.random.standard_normal(dim)
 length_scale = 2
 
 
-sq_exp = lambda r, _: np.exp(-(r)**2/(2*length_scale**2))
-
 #define required functions
 phi = lambda x, y: np.linalg.norm(x-y)
 mat = Matern(length_scale=length_scale)
 mat.nu = 2.5
 
-def calc_cov_matrix(x, ufunc):
-    '''Calculates the covariance matrix for a given covariance function'''
-    C = np.zeros((*x.shape,*x.shape))
-    for i in range(dim):
-        for j in range(dim):
-            C[i,j] = ufunc((x[i]- x[j])**2, 1, 2, .5)
-    return C
+def calc_cov_matrix(X:np.array, ker: Kernel):
+    '''uses kernels form scipy.gaussian_process.kernels to calculate a cov matrix'''
+    return ker.__call__(X)
+
 
 def w_pCN_step(xi: np.array, y: np.array, beta: float, T: np.array, phi: Callable, dim: int=-1):
     '''defines one step of the w-pCN algorithm as found in https://arxiv.org/pdf/1803.03344.pdf Section 3.1
     xi : current location of markov chain
     y : sample data
     beta: jump parameter
-    T: Q
+    T: To center the coordinates
+    dim : dimensionality of the input. 
     '''
     #setup vars
     accepted = False
@@ -71,6 +67,8 @@ for k in range(n_iter):
     xi, acc = w_pCN_step(xi, y, beta, T, phi)
     accepted +=acc
     path.append(T@xi)
+
+    
 
 print('Acceptance probability: {0}%'.format(accepted/n_iter*100))
 
