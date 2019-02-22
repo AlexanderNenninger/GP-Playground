@@ -8,15 +8,15 @@ from sklearn.gaussian_process.kernels import Matern
 from sklearn.gaussian_process.kernels import Kernel
 from mayavi import mlab
 
-dim = 100
-n_samples = 10
-sigma = .1
+dim = 50
+n_samples = 100
+sigma = .02
 #Make Data
 ####################
 X_train = np.matrix([np.linspace(0,2*np.pi, dim)]*n_samples).T
 y = np.round(np.sin(X_train),0) + sigma * np.random.standard_normal(X_train.shape)
 ##################
-X_eval = np.matrix(np.linspace(0, np.pi, dim)).T
+X_eval = np.matrix(np.linspace(0, 2*np.pi, dim)).T
 
 l = np.ones(n_samples)
 print('L: {1} -> {0}'.format(X_eval.shape, X_train.shape))
@@ -53,7 +53,7 @@ def w_pCN_step(xi: np.array, y: np.array, beta: float, T: np.array, phi: Callabl
         xi = xi_hat
         u = u_hat
         accepted = True
-    return xi, u, accepted
+    return xi, u, accepted, log_prob
 
 C = calculate_cov_matrix(X_train, X_eval, ker, eval_gradient=False)
 
@@ -95,24 +95,19 @@ accepted = 0
 path = []
 alpha = 1
 beta = .05
-ker_hat = Matern()
-exp_pdf = stats.distributions.expon()
+gamma = 1.7
 
 for k in range(n_iter):
     ###pcn step
-    xi, u, acc = w_pCN_step(xi, y, beta, T, phi)
+    xi, u, acc, log_prob = w_pCN_step(xi, y, beta, T, phi)
     accepted +=acc
     path.append(u)
    
     # ##gibbs step
-    # l_hat  = np.random.exponential(alpha, l.shape)
-    # prob = np.exp(log_prob)*np.sum(exp_pdf.pdf(l))/np.sum(exp_pdf.pdf(l_hat))
-    # if prob >= np.random.rand():
-    #     l = l_hat
-    #     ker.length_scale = l
-    #     T = ker(X_train,X_eval)
-    
-    
+    # beta_hat = alpha * np.random.rand()**gamma
+    # if np.exp(log_prob) * beta**gamma-1 / beta_hat**gamma-1 >= np.random.rand():
+    #     beta = beta_hat
+ 
 
 
 
