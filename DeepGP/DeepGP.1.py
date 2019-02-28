@@ -6,24 +6,24 @@ import matplotlib.pyplot as plt
 import scipy.special as special
 from sklearn.gaussian_process.kernels import Matern
 from sklearn.gaussian_process.kernels import Kernel
-from mayavi import mlab
+#from mayavi import mlab
 
-dim = 50
-n_samples = 100
-sigma = .02
+dim = 100
+n_samples = 10
+sigma = .01
 #Make Data
 ####################
 X_train = np.matrix([np.linspace(0,2*np.pi, dim)]*n_samples).T
-y = np.round(np.sin(X_train),0) + sigma * np.random.standard_normal(X_train.shape)
+y = np.sin(X_train) + sigma * np.random.standard_normal(X_train.shape)
 ##################
 X_eval = np.matrix(np.linspace(0, 2*np.pi, dim)).T
 
-l = np.ones(n_samples)
+l = np.ones(n_samples)*.5
 print('L: {1} -> {0}'.format(X_eval.shape, X_train.shape))
 #define required functions
-phi = lambda x, y: np.linalg.norm(x-y)
+phi = lambda x, y: np.linalg.norm(x-y)**2
 ker = Matern()
-ker.nu = 1.5
+ker.nu = 2.5
 ker.length_scale = l
 
 def calculate_cov_matrix(X_eval: np.array, X_train: np.array, ker: Kernel, eval_gradient=False):
@@ -86,15 +86,15 @@ C = calculate_cov_matrix(X_train, X_eval, ker, eval_gradient=False)
     #         is True.
     #     """
         # from \sklearn\gaussian_process\kernels.py
-T = C #np.linalg.cholesky(C).conj().T
+T = np.linalg.cholesky(C).conj().T
 
 #Run w-pCN
-n_iter = 100000
+n_iter = 500000
 xi = np.random.standard_normal(X_eval.shape)
 accepted = 0
 path = []
 alpha = 1
-beta = .05
+beta = .02
 gamma = 1.7
 
 for k in range(n_iter):

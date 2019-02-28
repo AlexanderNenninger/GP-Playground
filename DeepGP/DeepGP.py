@@ -12,23 +12,23 @@ dim = 100
 sigma = .1
 #Make Data
 ####################
-X = np.linspace(0,2*np.pi, dim)
-y = np.sin(X) + sigma * np.random.standard_normal(dim)
+X = np.matrix(np.linspace(0,2*np.pi, dim)).T
+y = np.round(np.sin(X)) + sigma * np.random.standard_normal(X.shape)
 ##################
 
 
 
-length_scale = np.ones(dim)
+length_scale = np.ones(1)
 
 
 #define required functions
 phi = lambda x, y: np.linalg.norm(x-y)
-mat = Matern(length_scale=length_scale)
-mat.nu = 2.5
+ker = Matern(length_scale=length_scale)
+ker.nu = 1.5
 
-def calc_cov_matrix(X:np.array, ker: Kernel):
+def calc_cov_matrix(X_train: np.array, X_eval: np.array, ker: Kernel):
     '''uses kernels form scipy.gaussian_process.kernels to calculate a cov matrix'''
-    return ker.__call__(X)
+    return ker(X_train, X_eval)
 
 
 def w_pCN_step(xi: np.array, y: np.array, beta: float, T: np.array, phi: Callable, dim: int=-1):
@@ -54,7 +54,7 @@ def w_pCN_step(xi: np.array, y: np.array, beta: float, T: np.array, phi: Callabl
     return xi, accepted
 
 #Calculate the Covariance Matrix and its Cholesky Decomposition
-C = calc_cov_matrix(X, mat)
+C = calc_cov_matrix(X,X, ker)
 T = C #np.linalg.cholesky(C).conj().T
 
 #Run w-pCN
@@ -63,7 +63,7 @@ xi = np.random.standard_normal(dim)
 accepted = 0
 path = []
 alpha = .5
-beta = .1
+beta = .5
 
 for k in range(n_iter):
     
