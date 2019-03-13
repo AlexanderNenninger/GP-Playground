@@ -91,7 +91,7 @@ def test_iter(num_basis_functions: list):
        
         acc_prob = sum(accepted)/len(accepted)
         for sample in path:
-            plt.plot(sample, 'rx')
+            plt.plot(X, sample, 'rx')
         plt.plot(X, np.mean(path, axis=0), 'b')
         plt.plot(X,y, 'g-')
         plt.text(0,0,acc_prob)
