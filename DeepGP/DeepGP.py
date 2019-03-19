@@ -6,7 +6,10 @@ from scipy.spatial.distance import pdist, cdist as sccdist, squareform
 import scipy.stats as stats
 import matplotlib.pyplot as plt
 from scipy.special import kv, gamma
+from scipy.integrate import romb, simps
+from scipy.linalg import sqrtm
 
+np.random.seed(0)
 #helper
 
 def cdist(XA, XB, metric='euclidean',*args, **kwargs):
@@ -16,7 +19,6 @@ def cdist(XA, XB, metric='euclidean',*args, **kwargs):
         return sccdist(np.matrix(XA).T, np.matrix(XB).T, metric=metric, *args, **kwargs)
 
 
-length_scale = 1
 ##kernels
 def matern_cov(dists, nu):
     if nu == 0.5:
@@ -37,76 +39,68 @@ def matern_cov(dists, nu):
     return K
 
 
-def w_pCN(y, T, n_iter, beta, phi, xi = None, burnin_ratio = 5):
+def w_pCN(y, T, n_iter, beta, phi, dx, xi = None, burnin_ratio = 2, debug=False):
+    #initialize xi and u
+    if not xi: xi = np.random.standard_normal(y.shape)
+    u = T@xi
+    samples = []
     accepted = []
-    if not xi:
-        xi = np.random.standard_normal(y.shape)
-    for n in range(n_iter):
+    #debug code
+    if debug:
+        av_acc = 0
+        log_probs = []
+    #the loop
+    for i in range(n_iter):
         acc = False
-        xi_hat = np.sqrt(1-beta**2) * xi + beta * np.random.standard_normal(xi.shape)
-        u = T@xi
+        #propose update
+        xi_hat =  np.sqrt(1-beta**2) * xi + beta * np.random.standard_normal(xi.shape)
         u_hat = T@xi_hat
-        log_prob = min(0, phi(u, y) - phi(u_hat,y)) # min to combat overflow
-        if  np.exp(log_prob) >= np.random.rand():
+        #evaluate update
+        log_prob = phi(u-y, dx)-phi(u_hat-y, dx)
+        if np.random.rand() <= np.exp(log_prob):
             xi = xi_hat
             u = u_hat
             acc = True
-        if n>n_iter/burnin_ratio:
-            try:
-                samples = np.vstack((samples, u))
-            except NameError:
-                samples = u
+        #store samples
+        if i > n_iter/burnin_ratio:
+            samples.append(u)
             accepted.append(acc)
-    return samples, accepted, xi
+
+        #debug code
+        if debug:
+            av_acc = av_acc +(acc-av_acc)/(i+1) # discounted acceptance rate
+            log_probs.append(log_prob)
+    #debug code
+    if debug:
+        return samples, acc, av_acc, xi, log_probs
+   
+    return samples, acc
 
 
 #distance metric
-phi = lambda x, y: np.sum((x - y) ** 2)
-
-def test_iter(num_basis_functions: list):
-    acceptance_probability = []
-    for i in num_basis_functions:    
-        #generate data
-        sigma = .0 #std of noise
-        n_training_samples = i
-
-        X = np.linspace(0,1,n_training_samples)*2*np.pi
-        y = np.round(np.sin(X)) + sigma * np.random.standard_normal(X.shape)
-
-
-        # X_eval = np.random.rand(n_eval_samples, X_train.shape[1])
-
-        # X = np.vstack((X_train, X_eval))
-        # y = np.vstack((y_train, np.random.standard_normal()))
-        C = cdist(X, X)
-        C = matern_cov(C, 1.5)
-        #standard deviation
-        T = np.linalg.cholesky(C).T.conj()
-        #Run w-pCN
-        n_iter = 1000
-        xi = np.random.standard_normal(X.shape)
-        beta = .2
-        #iteration
-        path, accepted, xi  = w_pCN(y, T, n_iter, beta, phi)
-       
-        acc_prob = sum(accepted)/len(accepted)
-        for sample in path:
-            plt.plot(X, sample, 'rx')
-        plt.plot(X, np.mean(path, axis=0), 'b')
-        plt.plot(X,y, 'g-')
-        plt.text(0,0,acc_prob)
-        acceptance_probability.append(acc_prob)
-        plt.savefig('regression'+str(i))
-
-    plt.plot(num_basis_functions,acceptance_probability)
-    plt.show()
+phi = lambda x, dx: romb(np.abs(x)**2, dx) * 17
 
 
 if __name__=='__main__':
-    test_iter([1,5,10,100,500,1000])
-
-        # fig, ax = plt.subplots()
-        # fig.text(10,10, ''.join(['Accaptance Probability', str(acc_prob)]))
-        # ax.plot(X,y)
-        # ax.plot(X,np.mean(path, axis=0))
-        # plt.show()
+    fig = plt.figure()
+    fig.tight_layout()
+    for i in range(0,10):
+        x = np.linspace(0,1, 2**i+1)
+        fx = np.sin(2*np.pi*x) + 0.05 * np.random.standard_normal(x.shape)
+        C = sqrtm(
+            matern_cov(
+                cdist(x,x)/.2, 
+                2.5
+                ))
+        samples , acc, acc_prob, _, log_probs = w_pCN(fx, C, 10000, .5, phi, x[1]-x[0], burnin_ratio=2, debug=True)
+        mean = np.mean(samples, axis=0)
+        
+        ax = fig.add_subplot(4,4,i+1)
+        ax.plot(x,fx,'b--')
+        ax.set_title(
+            '''Dim: %s; #Samples: %s; Acc Prob: %s'''%(2**i+1, len(samples), round(acc_prob,4), )
+        )
+        #ax.plot(x, samples, 'x')        
+        ax.plot(x, mean, 'r')
+        print(ax.title)
+    plt.show()

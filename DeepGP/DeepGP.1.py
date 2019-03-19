@@ -7,9 +7,9 @@ import scipy.special as special
 from sklearn.gaussian_process.kernels import Matern
 from sklearn.gaussian_process.kernels import Kernel
 #from mayavi import mlab
-
+np.random.seed(0)
 dim = 100
-n_samples = 10
+n_samples = 1
 sigma = .01
 #Make Data
 ####################
@@ -89,7 +89,7 @@ C = calculate_cov_matrix(X_train, X_eval, ker, eval_gradient=False)
 T = np.linalg.cholesky(C).conj().T
 
 #Run w-pCN
-n_iter = 500000
+n_iter = 5000
 xi = np.random.standard_normal(X_eval.shape)
 accepted = 0
 path = []
