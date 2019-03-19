@@ -78,7 +78,7 @@ def w_pCN(y, T, n_iter, beta, phi, dx, xi = None, burnin_ratio = 2, debug=False)
 
 
 #distance metric
-phi = lambda x, dx: romb(np.abs(x)**2, dx) * 17
+phi = lambda x, dx: romb(np.abs(x)**2, dx) * 100
 
 
 if __name__=='__main__':
@@ -86,7 +86,7 @@ if __name__=='__main__':
     fig.tight_layout()
     for i in range(0,10):
         x = np.linspace(0,1, 2**i+1)
-        fx = np.sin(2*np.pi*x) + 0.05 * np.random.standard_normal(x.shape)
+        fx =np.round(np.sin(2*np.pi*x)) + 0.05 * np.random.standard_normal(x.shape)
         C = sqrtm(
             matern_cov(
                 cdist(x,x)/.2, 
