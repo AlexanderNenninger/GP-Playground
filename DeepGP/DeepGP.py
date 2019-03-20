@@ -78,7 +78,7 @@ def w_pCN(y, T, n_iter, beta, phi, dx, xi = None, burnin_ratio = 2, debug=False)
 
 
 #distance metric
-phi = lambda x, dx: romb(np.abs(x)**2, dx) * 100
+phi = lambda x, dx: romb(np.abs(x)**2, dx) * 10
 
 
 if __name__=='__main__':
