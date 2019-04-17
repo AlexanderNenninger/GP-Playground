@@ -1,4 +1,3 @@
-from abc import ABCMeta, abstractmethod
 import math
 import numpy as np
 
@@ -8,6 +7,7 @@ import matplotlib.pyplot as plt
 from scipy.special import kv, gamma
 from scipy.integrate import romb, simps
 from scipy.linalg import sqrtm
+from skimage.transform import radon, rescale, iradon
 
 np.random.seed(0)
 #helper
@@ -37,6 +37,28 @@ def matern_cov(dists, nu):
         K *= tmp ** nu
         K *= kv(nu, tmp)
     return K
+
+
+
+def KLT(a):
+    """
+    Returns Karhunen Loeve Transform of the input and the transformation matrix and eigenval
+    Ex:
+    import numpy as np
+    a  = np.array([[1,2,4],[2,3,10]])
+    
+    kk,m = KLT(a)
+    print kk
+    print m
+    
+    # to check, the following should return the original a
+    print np.dot(kk.T,m).T
+    source: https://sukhbinder.wordpress.com/2014/09/11/karhunen-loeve-transform-in-python/  
+    """
+    val, vec = np.linalg.eig(np.cov(a))
+    klt = np.dot(vec,a)
+    return klt,vec,val
+
 
 
 def w_pCN(y, T, n_iter, beta, phi, dx, xi = None, burnin_ratio = 2, debug=False):
@@ -74,33 +96,70 @@ def w_pCN(y, T, n_iter, beta, phi, dx, xi = None, burnin_ratio = 2, debug=False)
     if debug:
         return samples, acc, av_acc, xi, log_probs
    
-    return samples, acc
+    return samples, accepted
 
 
-#distance metric
-phi = lambda x, dx: romb(np.abs(x)**2, dx) * 10
+#potential
+phi = lambda x, dx: (1 - romb(np.abs(x), dx) ** 2 ) ** 2
+
+
+
+# def dist(D1, D2, f1, f2, cov, dx1, dx2):
+#     '''
+#     'Distance' between two functions defined on different sets. 
+#     D1 is the domain of f1.
+#     D2 is the domain of f2.
+#     f1 and f2 are function values on their respective domains.
+#     cov is a callable weighting funtion.
+#     This is not a metric, as Manuel pointed out.
+#     '''
+#     if not callable(cov):
+#         raise TypeError('cov need to be a function of two arguments')
+#     d = 0
+#     for i, x1 in enumerate(D1):
+#         for j, x2 in enumerate(D2):
+#             d += cov(x1,x2) * np.linalg.norm(f1[i] - f2[j])
+#     return d# * dx1 * dx2
 
 
 if __name__=='__main__':
-    fig = plt.figure()
-    fig.tight_layout()
-    for i in range(0,10):
-        x = np.linspace(0,1, 2**i+1)
-        fx =np.round(np.sin(2*np.pi*x)) + 0.05 * np.random.standard_normal(x.shape)
-        C = sqrtm(
-            matern_cov(
-                cdist(x,x)/.2, 
-                2.5
-                ))
-        samples , acc, acc_prob, _, log_probs = w_pCN(fx, C, 10000, .5, phi, x[1]-x[0], burnin_ratio=2, debug=True)
-        mean = np.mean(samples, axis=0)
-        
-        ax = fig.add_subplot(4,4,i+1)
-        ax.plot(x,fx,'b--')
-        ax.set_title(
-            '''Dim: %s; #Samples: %s; Acc Prob: %s'''%(2**i+1, len(samples), round(acc_prob,4), )
-        )
-        #ax.plot(x, samples, 'x')        
-        ax.plot(x, mean, 'r')
-        print(ax.title)
+
+    x0 = np.linspace(0,1,100)
+    y0 = np.linspace(0,1, 100)
+
+    xx, yy = np.meshgrid(x0, y0)
+
+    f = lambda xx, yy: np.sin(np.pi * xx) * np.sin(np.pi * yy)
+    
+    fX = np.dstack(f(xx, yy)).reshape(-1, 1)
+    X = np.dstack([xx, yy]).reshape(-1, 2)
+    
+    T = sqrtm(matern_cov(cdist(X,X), 2.5))
+
+
+    
+    
+    samples, accepted = w_pCN(f(xx,yy), )
+    
+    ###transform
+    plt.imshow(f(xx,yy))
     plt.show()
+
+    theta = np.linspace(0,180, max(image.shape))
+    sinogram = radon(image, theta=theta, circle=False)
+
+
+
+
+
+    reconstruction_fbp = iradon(sinogram, theta=theta, circle=False)
+    plt.imshow(reconstruction_fbp)
+    plt.show()
+
+    err = image - reconstruction_fbp
+
+    plt.imshow(err)
+    plt.show()
+
+   
+    pass
