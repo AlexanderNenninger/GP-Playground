@@ -1,3 +1,8 @@
+import os
+import sys
+sys.path.append(os.getcwd())
+
+
 import math
 import numpy as np
 
@@ -8,6 +13,9 @@ from scipy.special import kv, gamma
 from scipy.integrate import romb, simps
 from scipy.linalg import sqrtm
 from skimage.transform import radon, rescale, iradon
+
+#from custom modules
+from utils import plotting
 
 np.random.seed(0)
 #helper
@@ -106,21 +114,27 @@ phi = lambda x, dx: (1 - romb(np.abs(x), dx) ** 2 ) ** 2
 
 
 if __name__=='__main__':
-
+    #size of sample area
     xmin, xmax = 0, 1
     ymin, ymax = 0, 1
-
+    #generate points to sample from, eg. imagea data
     xx, yy = np.mgrid[xmin:xmax:9j, ymin:ymax:9j]
     X = np.vstack([xx.ravel(), yy.ravel()]).T
-
+    #generate image data
     f = lambda xx, yy: np.sin(np.pi * xx) * np.sin(np.pi * yy)
     fX = f(xx, yy)
+
+    #genertate covariance matrix
     T = sqrtm(matern_cov(cdist(X,X), 2.5))
     
+    #transform sample -- in this case the true field
     tf = T@np.ravel(fX)
 
-
-    plt.tricontourf(X[:,0], X[:,1], tf)
+    #transform back to meshgird format
+    Xp, Yp, Zp = plotting.plot_contour(X[:,0], X[:,1], np.ravel(fX))
+    
+    #show contour plot
+    plt.contourf(Xp, Yp, Zp)
     plt.show()
     
     
@@ -129,8 +143,8 @@ if __name__=='__main__':
     ###transform
 
 
-    theta = np.linspace(0,180, max(image.shape))
-    sinogram = radon(image, theta=theta, circle=False)
+    theta = np.linspace(0,180, max(fX.shape))
+    sinogram = radon(fX, theta=theta, circle=False)
 
 
 
@@ -140,7 +154,7 @@ if __name__=='__main__':
     plt.imshow(reconstruction_fbp)
     plt.show()
 
-    err = image - reconstruction_fbp
+    err = fX - reconstruction_fbp
 
     plt.imshow(err)
     plt.show()
