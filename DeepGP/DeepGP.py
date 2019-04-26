@@ -104,46 +104,30 @@ phi = lambda x, dx: (1 - romb(np.abs(x), dx) ** 2 ) ** 2
 
 
 
-# def dist(D1, D2, f1, f2, cov, dx1, dx2):
-#     '''
-#     'Distance' between two functions defined on different sets. 
-#     D1 is the domain of f1.
-#     D2 is the domain of f2.
-#     f1 and f2 are function values on their respective domains.
-#     cov is a callable weighting funtion.
-#     This is not a metric, as Manuel pointed out.
-#     '''
-#     if not callable(cov):
-#         raise TypeError('cov need to be a function of two arguments')
-#     d = 0
-#     for i, x1 in enumerate(D1):
-#         for j, x2 in enumerate(D2):
-#             d += cov(x1,x2) * np.linalg.norm(f1[i] - f2[j])
-#     return d# * dx1 * dx2
-
 
 if __name__=='__main__':
 
-    x0 = np.linspace(0,1,100)
-    y0 = np.linspace(0,1, 100)
+    xmin, xmax = 0, 1
+    ymin, ymax = 0, 1
 
-    xx, yy = np.meshgrid(x0, y0)
+    xx, yy = np.mgrid[xmin:xmax:9j, ymin:ymax:9j]
+    X = np.vstack([xx.ravel(), yy.ravel()]).T
 
     f = lambda xx, yy: np.sin(np.pi * xx) * np.sin(np.pi * yy)
-    
-    fX = np.dstack(f(xx, yy)).reshape(-1, 1)
-    X = np.dstack([xx, yy]).reshape(-1, 2)
-    
+    fX = f(xx, yy)
     T = sqrtm(matern_cov(cdist(X,X), 2.5))
+    
+    tf = T@np.ravel(fX)
 
 
+    plt.tricontourf(X[:,0], X[:,1], tf)
+    plt.show()
     
     
-    samples, accepted = w_pCN(f(xx,yy), )
+
     
     ###transform
-    plt.imshow(f(xx,yy))
-    plt.show()
+
 
     theta = np.linspace(0,180, max(image.shape))
     sinogram = radon(image, theta=theta, circle=False)
