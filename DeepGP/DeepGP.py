@@ -154,15 +154,13 @@ if __name__=='__main__':
     phi = partial(_phi, dx=delta)
 
     #run w_pcn
-    samples, accepted = w_pCN(sinogram, ObservationOp, PriorOp, fX.shape, 50000, .5, phi, burnin_ratio=5)
+    samples, accepted = w_pCN(sinogram, ObservationOp, PriorOp, fX.shape, 100000, .5, phi, burnin_ratio=5)
 
     av = np.mean(samples, axis=0)
     plt.imshow(av)
     print(
-        (
-            'Acceptance Probability: %s \n'%(np.mean(accepted),),
-            'Number of Samples: %s'%(len(samples))
-        )
+        'Acceptance Probability: %s \n'%(np.mean(accepted),),
+        'Number of Samples: %s'%(len(samples))
     )
     plt.show()
    
