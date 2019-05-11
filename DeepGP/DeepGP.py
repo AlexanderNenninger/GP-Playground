@@ -1,6 +1,11 @@
-from abc import ABCMeta, abstractmethod
+import os
+import sys
+sys.path.append(os.getcwd())
+
+
 import math
 import numpy as np
+from functools import partial
 
 from scipy.spatial.distance import pdist, cdist as sccdist, squareform
 import scipy.stats as stats
@@ -8,7 +13,11 @@ import matplotlib.pyplot as plt
 from scipy.special import kv, gamma
 from scipy.integrate import romb, simps
 from scipy.linalg import sqrtm
+from skimage.transform import radon, rescale, iradon
 
+#from custom modules
+from utils import plotting, arrays
+#script settings
 np.random.seed(0)
 #helper
 
@@ -17,6 +26,10 @@ def cdist(XA, XB, metric='euclidean',*args, **kwargs):
         return sccdist(XA,XB, metric=metric, *args, **kwargs)
     except ValueError:
         return sccdist(np.matrix(XA).T, np.matrix(XB).T, metric=metric, *args, **kwargs)
+
+def OP(T):
+    '''Makes a function out of any numpy array'''
+    return lambda x: T@x
 
 
 ##kernels
@@ -39,10 +52,23 @@ def matern_cov(dists, nu):
     return K
 
 
-def w_pCN(y, T, n_iter, beta, phi, dx, xi = None, burnin_ratio = 2, debug=False):
+
+def KLT(a):
+    """
+    Returns Karhunen Loeve Transform of the input and the transformation matrix and eigenval
+    source: https://sukhbinder.wordpress.com/2014/09/11/karhunen-loeve-transform-in-python/  
+    """
+    val, vec = np.linalg.eig(np.cov(a))
+    klt = np.dot(vec,a)
+    return klt,vec,val
+
+
+
+def w_pCN(measurement, ObservationOp, PriorOp, sample_shape, n_iter, beta, phi, xi = None, burnin_ratio = 2, debug=False):
     #initialize xi and u
-    if not xi: xi = np.random.standard_normal(y.shape)
-    u = T@xi
+    if not xi: xi = np.random.standard_normal(sample_shape)
+    proposal = PriorOp(xi)
+    u = ObservationOp(proposal)
     samples = []
     accepted = []
     #debug code
@@ -54,16 +80,18 @@ def w_pCN(y, T, n_iter, beta, phi, dx, xi = None, burnin_ratio = 2, debug=False)
         acc = False
         #propose update
         xi_hat =  np.sqrt(1-beta**2) * xi + beta * np.random.standard_normal(xi.shape)
-        u_hat = T@xi_hat
+        proposal_hat = PriorOp(xi_hat)
+        u_hat = ObservationOp(proposal_hat)
         #evaluate update
-        log_prob = phi(u-y, dx)-phi(u_hat-y, dx)
+        log_prob = min(phi(u, measurement)-phi(u_hat, measurement), 0)#anti overflow
         if np.random.rand() <= np.exp(log_prob):
             xi = xi_hat
+            proposal = proposal_hat
             u = u_hat
             acc = True
         #store samples
-        if i > n_iter/burnin_ratio:
-            samples.append(u)
+        if i >= n_iter/burnin_ratio:
+            samples.append(proposal)
             accepted.append(acc)
 
         #debug code
@@ -74,33 +102,66 @@ def w_pCN(y, T, n_iter, beta, phi, dx, xi = None, burnin_ratio = 2, debug=False)
     if debug:
         return samples, acc, av_acc, xi, log_probs
    
-    return samples, acc
-
-
-#distance metric
-phi = lambda x, dx: romb(np.abs(x)**2, dx) * 10
+    return samples, accepted
 
 
 if __name__=='__main__':
-    fig = plt.figure()
-    fig.tight_layout()
-    for i in range(0,10):
-        x = np.linspace(0,1, 2**i+1)
-        fx =np.round(np.sin(2*np.pi*x)) + 0.05 * np.random.standard_normal(x.shape)
-        C = sqrtm(
-            matern_cov(
-                cdist(x,x)/.2, 
-                2.5
-                ))
-        samples , acc, acc_prob, _, log_probs = w_pCN(fx, C, 10000, .5, phi, x[1]-x[0], burnin_ratio=2, debug=True)
-        mean = np.mean(samples, axis=0)
-        
-        ax = fig.add_subplot(4,4,i+1)
-        ax.plot(x,fx,'b--')
-        ax.set_title(
-            '''Dim: %s; #Samples: %s; Acc Prob: %s'''%(2**i+1, len(samples), round(acc_prob,4), )
+    #size of sample area
+    xmin, xmax = 0, 1
+    ymin, ymax = 0, 1
+    imgSize = 20j
+    #generate points to sample from, eg. image data
+    xx, yy = np.mgrid[xmin:xmax:imgSize, ymin:ymax:imgSize]
+    X = np.vstack([xx.ravel(), yy.ravel()]).T
+
+    #make prior
+    T = sqrtm(
+        matern_cov(
+            dists=cdist(X,X) * 10,
+            nu = 1.5
         )
-        #ax.plot(x, samples, 'x')        
-        ax.plot(x, mean, 'r')
-        print(ax.title)
+    ) * 2
+
+    def PriorTransform(fx, T):
+        'T needs to an Automorphism, maps R^n to smoother functions. Assumes f was generated on a set of points X where T is some function of cdist(X)'
+        shape = fx.shape
+        return(T@np.ravel(fx)).reshape(shape).real
+    
+    #generate image data
+    f = lambda xx, yy: np.sin(np.pi * xx) * np.sin(2 * np.pi * yy)
+    fX = f(xx, yy)
+
+    #transform back to meshgird format
+    Xp, Yp, Zp = plotting.plot_contour(X[:,0], X[:,1], np.ravel(fX))
+    
+    #show contour plot
+    plt.contourf(Yp, Xp, Zp)
     plt.show()
+    
+    #take measurements
+    theta = np.linspace(0, 180, 5, endpoint=True)
+    sinogram = radon(fX, theta, circle=False)
+    #setup integration steps
+    delta = 1/imgSize * 1/theta.max()-theta.min()
+    
+    #setup measurement operator
+    ObservationOp = partial(radon, theta=theta, circle=False)
+    #setup prior operator
+    PriorOp = partial(PriorTransform, T=T)
+    
+    #error function
+    _phi = lambda x,y,dx: np.sum((x-y)**2) * dx
+    phi = partial(_phi, dx=delta)
+
+    #run w_pcn
+    samples, accepted = w_pCN(sinogram, ObservationOp, PriorOp, fX.shape, 100000, .5, phi, burnin_ratio=5)
+
+    av = np.mean(samples, axis=0)
+    plt.imshow(av)
+    print(
+        'Acceptance Probability: %s \n'%(np.mean(accepted),),
+        'Number of Samples: %s'%(len(samples))
+    )
+    plt.show()
+   
+    pass

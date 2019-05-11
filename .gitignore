@@ -1,0 +1,6 @@
+env
+test_*
+.gitignore
+activate.bat
+deactivate.bat
+.vscode
