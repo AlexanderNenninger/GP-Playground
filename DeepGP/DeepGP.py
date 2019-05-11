@@ -64,12 +64,11 @@ def KLT(a):
 
 
 
-def w_pCN(measurement, ObservationOp, PriorOp, sample_shape, n_iter, beta, phi, dx, xi = None, burnin_ratio = 2, debug=False):
+def w_pCN(measurement, ObservationOp, PriorOp, sample_shape, n_iter, beta, phi, xi = None, burnin_ratio = 2, debug=False):
     #initialize xi and u
     if not xi: xi = np.random.standard_normal(sample_shape)
-    u = ObservationOp(
-        PriorOp(xi)
-    )
+    proposal = PriorOp(xi)
+    u = ObservationOp(proposal)
     samples = []
     accepted = []
     #debug code
@@ -81,18 +80,18 @@ def w_pCN(measurement, ObservationOp, PriorOp, sample_shape, n_iter, beta, phi, 
         acc = False
         #propose update
         xi_hat =  np.sqrt(1-beta**2) * xi + beta * np.random.standard_normal(xi.shape)
-        u_hat = ObservationOp(
-            PriorOp(xi_hat)
-        )
+        proposal_hat = PriorOp(xi_hat)
+        u_hat = ObservationOp(proposal_hat)
         #evaluate update
-        log_prob = min(phi(u, measurement, dx)-phi(u_hat, measurement, dx), 0)#anti overflow
+        log_prob = min(phi(u, measurement)-phi(u_hat, measurement), 0)#anti overflow
         if np.random.rand() <= np.exp(log_prob):
             xi = xi_hat
+            proposal = proposal_hat
             u = u_hat
             acc = True
         #store samples
-        if i > n_iter/burnin_ratio:
-            samples.append(xi)
+        if i >= n_iter/burnin_ratio:
+            samples.append(proposal)
             accepted.append(acc)
 
         #debug code
@@ -110,17 +109,18 @@ if __name__=='__main__':
     #size of sample area
     xmin, xmax = 0, 1
     ymin, ymax = 0, 1
-    #generate points to sample from, eg. imagea data
-    xx, yy = np.mgrid[xmin:xmax:19j, ymin:ymax:19j]
+    imgSize = 20j
+    #generate points to sample from, eg. image data
+    xx, yy = np.mgrid[xmin:xmax:imgSize, ymin:ymax:imgSize]
     X = np.vstack([xx.ravel(), yy.ravel()]).T
 
     #make prior
     T = sqrtm(
         matern_cov(
-            dists=cdist(X,X),
-            nu = 2.5
+            dists=cdist(X,X) * 10,
+            nu = 1.5
         )
-    )
+    ) * 2
 
     def PriorTransform(fx, T):
         'T needs to an Automorphism, maps R^n to smoother functions. Assumes f was generated on a set of points X where T is some function of cdist(X)'
@@ -135,33 +135,35 @@ if __name__=='__main__':
     Xp, Yp, Zp = plotting.plot_contour(X[:,0], X[:,1], np.ravel(fX))
     
     #show contour plot
-    plt.contourf(Xp, Yp, Zp)
-    # plt.show()
+    plt.contourf(Yp, Xp, Zp)
+    plt.show()
     
     #take measurements
-    theta = np.linspace(0, 180, 10, endpoint=False)
-    dx = arrays.pad(theta[1:] - theta[:-1], theta, [0])
-    sinogram = radon(fX, theta=theta, circle=False)
-    #plt.imshow(sinogram)
-    #plt.show()
-
+    theta = np.linspace(0, 180, 5, endpoint=True)
+    sinogram = radon(fX, theta, circle=False)
+    #setup integration steps
+    delta = 1/imgSize * 1/theta.max()-theta.min()
+    
     #setup measurement operator
     ObservationOp = partial(radon, theta=theta, circle=False)
-    #setup PriorOperator
+    #setup prior operator
     PriorOp = partial(PriorTransform, T=T)
     
     #error function
-    phi = lambda x,y, dx: np.sum((x-y)**2 * dx)/4000
+    _phi = lambda x,y,dx: np.sum((x-y)**2) * dx
+    phi = partial(_phi, dx=delta)
+
     #run w_pcn
-    samples, accepted = w_pCN(sinogram, ObservationOp, PriorOp, fX.shape, 20000, .5, phi, dx)
+    samples, accepted = w_pCN(sinogram, ObservationOp, PriorOp, fX.shape, 50000, .5, phi, burnin_ratio=5)
 
     av = np.mean(samples, axis=0)
     plt.imshow(av)
-    print('Acceptance Probability: %s'%(np.mean(accepted),))
-    plt.show()
-
-    ref = iradon(sinogram)
-    plt.imshow(ref)
+    print(
+        (
+            'Acceptance Probability: %s \n'%(np.mean(accepted),),
+            'Number of Samples: %s'%(len(samples))
+        )
+    )
     plt.show()
    
     pass
