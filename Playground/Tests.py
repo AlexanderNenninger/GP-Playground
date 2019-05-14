@@ -1,26 +1,20 @@
 import numpy as np
 import matplotlib.pyplot as plt
-from skimage.transform import radon, rescale, iradon
+from scipy import stats
+from functools import partial
 
-x = np.linspace(0,1,50)
+support = np.linspace(0,1,99)
 
-xmin, xmax = 0, 1
-ymin, ymax = 0, 1
-imgSize = 31j
+sigma = 10
+betaPdf = lambda x, theta, sigma: stats.truncnorm.pdf((x-theta)*sigma, a=-theta*sigma, b=sigma*(1-theta))*sigma
+betaRvs = lambda theta, sigma: stats.truncnorm.rvs(-sigma*theta, sigma*(1-theta)) / sigma + theta
 
-xx, yy = np.mgrid[xmin:xmax:imgSize, ymin:ymax:imgSize]
-X = np.vstack([xx.ravel(), yy.ravel()]).T
-
-f = lambda xx, yy: np.sin(np.pi * xx) * np.sin(2 * np.pi * yy)
-fX = f(xx, yy)
-
-size = []
-#asserted that len(sinogram) ~ len(image) -> dx ~ 1/size(image)
-for i in range(10,100):
-    img = np.random.standard_normal((i,i))
-    sinogram = radon(img, [0, 20], circle=False)
-    size.append(sinogram.shape[0])
-
-print(size)
-plt.plot(size)
-plt.show()        
+X = np.linspace(-.1,1.1, 100)
+Beta = np.linspace(0,1,5)
+fig, ax = plt.subplots(nrows=5, ncols=1,)
+plt.subplots_adjust(hspace=.5)
+for i, beta in enumerate(Beta):
+    samples = [betaRvs(beta, sigma) for i in range(10000)]
+    ax[i].plot(X, betaPdf(X, beta, sigma))
+    ax[i].hist(samples, density=True)
+plt.show()
