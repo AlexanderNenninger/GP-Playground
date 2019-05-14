@@ -1,14 +1,23 @@
 '''
-Zhis is the main code file of my bachelor's thesis. 
-Ideas:
-    1. Only update the jump parameter beta during the first 10,000 interations, then fix or reduce update rate
-    2. Adapt the length scale parameters during the iteration, maybe for the first 10,000, then fix or reduce update rate
-    3. Implement more layers, but I need a powerful server for that
+This is the main code file of my bachelor's thesis. 
 
-    Next Steps:
+Problems:
+    1. The jump parameter beta always converges to the area around beta_0, the peak of the prior. Something is wrong there!
+
+Ideas:
+    1. Only update the jump parameter beta during the first 10,000 interations, then fix or reduce update rate - Done
+    2. Adapt the length scale parameters during the iteration, maybe for the first 10,000 iterations, then fix or reduce update rate
+    3. Implement more layers, but I need a powerful server for that
+    4. Performance Metrics - Need to decide with Tim which ones he wants to see
+
+Next Steps:
     1. Modularize the code more, so functionality is easily added
-    2. Implemet idea Nr.2
-    3. After Thesis: Write Performance critical components in C++/C
+    2. Implement idea Nr.2
+    3. Implement Idea Nr.3
+    4. Implement Idea Nr.4
+    
+After Thesis: 
+    1. Write performance critical components in C++/C
 '''
 
 
@@ -104,7 +113,7 @@ def w_pCN(measurement, ObservationOp, PriorOp, sample_shape, n_iter, beta, phi, 
     betaPdf = lambda x, theta: stats.truncnorm.pdf((x-theta)*sigma, a=-theta*sigma, b=sigma*(1-theta))*sigma
     betaRV = lambda theta: stats.truncnorm.rvs(-sigma*theta, sigma*(1-theta)) / sigma + theta
     
-    #u
+    #u - the observations
     proposal = PriorOp(xi)
     u = ObservationOp(proposal)
     
@@ -138,7 +147,7 @@ def w_pCN(measurement, ObservationOp, PriorOp, sample_shape, n_iter, beta, phi, 
             betas.append(beta)
         elif i == update_beta_until:
             beta = np.mean(betas[int(len(betas)*burnin_ratio):])
-            print(i, ' Stopped updating Beta')
+            print(i, ' Stopped updating the Jump Parameter at beta = %s'%beta)
 
         #debug messages
         if i%1000 == 0 or i==1:
