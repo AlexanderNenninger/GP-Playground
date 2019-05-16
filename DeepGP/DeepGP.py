@@ -11,13 +11,14 @@ Ideas:
     4. Performance Metrics - Need to decide with Tim which ones he wants to see
 
 Next Steps:
-    1. Modularize the code more, so functionality is easily added
+    1. Modularize the code more, so functionality is easily added - done
     2. Implement idea Nr.2
     3. Implement Idea Nr.3
     4. Implement Idea Nr.4
     
 After Thesis: 
     1. Write performance critical components in C++/C
+    2. Implement different Priors - Besov is always an option!
 '''
 
 
@@ -64,6 +65,14 @@ def center_scale(arr: np.array)->np.array:
 def icenter_scale(arr: np.array, arr_min, arr_max)->np.array:
     return (arr+1)/2*(arr_max-arr_min) + arr_min
 
+def PriorTransform(fx, T):
+    ''''
+    T needs to be a symmetric, positive semi-definite matrix, which maps White Noise on R^n to smoother functions.
+    Assumes f was generated on a set of points X where T generates a RKHS
+    '''
+    shape = fx.shape
+    return(T@np.ravel(fx)).reshape(shape).real
+
 
 ##kernels
 def matern_cov(dists, nu):
@@ -102,6 +111,18 @@ def w_pCN(measurement, ObservationOp, PriorOp, sample_shape, n_iter, beta, phi, 
             return beta_hat, True
         return beta, False
     
+    #this is what actually reconstructs images
+    def _update_main(xi, proposal, u, beta, phi, PriorOp, ObservationOp):
+        #propose update
+        xi_hat =  np.sqrt(1-beta**2) * xi + beta * np.random.standard_normal(xi.shape)
+        proposal_hat = PriorOp(xi_hat)
+        u_hat = ObservationOp(proposal_hat)
+        #evaluate update
+        log_prob = min(phi(u, measurement)-phi(u_hat, measurement), 0)#anti overflow
+        if np.random.rand() <= np.exp(log_prob):
+            return xi_hat, proposal_hat, u_hat, log_prob, True
+        return xi, proposal, u, log_prob, False
+
     #initialize values
     #xi
     if not xi: xi = np.random.standard_normal(sample_shape)
@@ -129,19 +150,11 @@ def w_pCN(measurement, ObservationOp, PriorOp, sample_shape, n_iter, beta, phi, 
     
     #the loop
     for i in range(n_iter):
-        acc = False
-        #propose update
-        xi_hat =  np.sqrt(1-beta**2) * xi + beta * np.random.standard_normal(xi.shape)
-        proposal_hat = PriorOp(xi_hat)
-        u_hat = ObservationOp(proposal_hat)
-        #evaluate update
-        log_prob = min(phi(u, measurement)-phi(u_hat, measurement), 0)#anti overflow
-        if np.random.rand() <= np.exp(log_prob):
-            xi = xi_hat
-            proposal = proposal_hat
-            u = u_hat
-            u_acc = True
-
+        
+        #chain for target distribution
+        xi, proposal, u, log_prob, u_acc = _update_main(xi, proposal, u, beta, phi, PriorOp, ObservationOp)       
+        
+        #beta update
         if i < update_beta_until:
             beta, beta_acc = _update_beta(beta, beta_0, log_prob, betaPdf, betaRV)
             betas.append(beta)
@@ -160,7 +173,7 @@ def w_pCN(measurement, ObservationOp, PriorOp, sample_shape, n_iter, beta, phi, 
 
         #debug code
         if debug:
-            av_acc = av_acc +(acc-av_acc)/(i+1) # discounted acceptance rate
+            av_acc = av_acc +(u_acc-av_acc)/(i+1) # discounted acceptance rate
             log_probs.append(log_prob)
     #debug code
     if debug:
@@ -176,10 +189,10 @@ if __name__=='__main__':
 
 
     
-    #size of sample area
+    #size of sample area - the unit square is a solid choice for the most part, be aware of image dimensions
     sample_area = [(0, 1)]*image.ndim
     
-    #pixel locations
+    #find pixel locations
     xx, yy = tuple(
         np.linspace(
             sample_area[i][0],sample_area[i][1],image.shape[i]
@@ -197,20 +210,13 @@ if __name__=='__main__':
             nu = 1.5
         )
     ) * 2
-
-    def PriorTransform(fx, T):
-        'T needs to an Automorphism, maps R^n to smoother functions. Assumes f was generated on a set of points X where T is some function of cdist(X)'
-        shape = fx.shape
-        return(T@np.ravel(fx)).reshape(shape).real
-    
-    #generate image data
-    # f = lambda xx, yy: np.sin(np.pi * xx) * np.sin(2 * np.pi * yy)
-    # fX = f(xx, yy)
+   
+    #normalize function values to [-1,1]
     fX, _, _ = center_scale(image)
-    #transform back to meshgird format
+    #transform back to meshgird format 
     Xp, Yp, Zp = plotting.plot_contour(X[:,0], X[:,1], np.ravel(fX))
     
-    #make contour plot - check if coordinates are correct
+    #make contour plot - it's easy to spot errors this way
     fig, ax = plt.subplots(nrows=2, ncols=2)
     ax[0,0].contourf(Xp, Yp, Zp)
        
@@ -226,19 +232,19 @@ if __name__=='__main__':
    
     #setup integration steps - the spacing of the measurement points is proportional to 1/image.shape[0] in skimage.radon
     delta = 1/image.shape[0] * 1/theta.max()-theta.min()
+    #error functional on the measurements
+    _phi = lambda x,y,dx: np.sum((x-y)**2) * dx
+    phi = partial(_phi, dx=delta)
     
-    #setup measurement operator
+    #setup measurement operator - this is bad for performance, due to function call overhead, but really good for development
     ObservationOp = partial(radon, theta=theta, circle=False)
     #setup prior operator
     PriorOp = partial(PriorTransform, T=T)
     
-    #error function
-    _phi = lambda x,y,dx: np.sum((x-y)**2) * dx
-    phi = partial(_phi, dx=delta)
-
-    #run w_pcn
+    #run the w_pcn chain
     samples, accepted, av_acc, xi, log_probs, betas = w_pCN(sinogram, ObservationOp, PriorOp, fX.shape, 50000, .9, phi, burnin_ratio=.2, debug=True)
 
+    #evaluate markovchain
     av = np.mean(samples, axis=0)
     av = rescale(av, 20, multichannel=False)
     ax[1,0].imshow(av)
