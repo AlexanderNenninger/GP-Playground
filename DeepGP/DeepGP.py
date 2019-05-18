@@ -5,20 +5,21 @@ Problems:
     1. The jump parameter beta always converges to the area around beta_0, the peak of the prior. Something is wrong there!
 
 Ideas:
-    1. Only update the jump parameter beta during the first 10,000 interations, then fix or reduce update rate - Done
+    1. Only update the jump parameter beta during the first 10,000 iterations, then fix or reduce update rate - Done
     2. Adapt the length scale parameters during the iteration, maybe for the first 10,000 iterations, then fix or reduce update rate
-    3. Implement more layers, but I need a powerful server for that
+    3. Implement more layers, but I need a powerful server for that and need to switch to an ONB representation of the function space
     4. Performance Metrics - Need to decide with Tim which ones he wants to see
 
 Next Steps:
     1. Modularize the code more, so functionality is easily added - done
     2. Implement idea Nr.2
-    3. Implement Idea Nr.3
-    4. Implement Idea Nr.4
+    3. Implement Idea Nr.4
     
-After Thesis: 
-    1. Write performance critical components in C++/C
-    2. Implement different Priors - Besov is always an option!
+After Thesis (maybe): 
+    1. Implement different Priors - Besov is an option!; Might need to switch to basis representations of the space then.
+    2. Write performance critical components in C++/C
+    3. Optimize regularization parameter
+    4. Use a coarser tiling for deeper layers
 '''
 
 
@@ -65,13 +66,13 @@ def center_scale(arr: np.array)->np.array:
 def icenter_scale(arr: np.array, arr_min, arr_max)->np.array:
     return (arr+1)/2*(arr_max-arr_min) + arr_min
 
-def PriorTransform(fx, T):
+def PriorTransform(fx, T, amplitude = 1):
     ''''
     T needs to be a symmetric, positive semi-definite matrix, which maps White Noise on R^n to smoother functions.
     Assumes f was generated on a set of points X where T generates a RKHS
     '''
     shape = fx.shape
-    return(T@np.ravel(fx)).reshape(shape).real
+    return(T@np.ravel(fx)).reshape(shape).real * amplitude
 
 
 ##kernels
@@ -94,22 +95,15 @@ def matern_cov(dists, nu):
     return K
 
 
-def w_pCN(measurement, ObservationOp, PriorOp, sample_shape, n_iter, beta, phi, xi = None, burnin_ratio = 2, debug=False):
+def w_pCN(measurement, ObservationOp, PriorOp, sample_shape, X, n_iter, beta, phi, T, xi = None, xi2=None, burnin_ratio = 2, debug=False):
     
 
     #define internal functions. cleans up the code
-    def _update_beta(beta, beta_0, log_prob, betaPdf, betaRV):
-        #update beta - draw from exponential distribution, beta sets the location of the peak of the pdf
-        beta_hat = betaRV(beta)
-        #calculate the P(beta_hat|beta)/P(beta|beta_hat)*pi_0(b)
-        beta_update_prob = np.exp(log_prob)
-        beta_update_prob *= betaPdf(beta_hat, beta)
-        beta_update_prob /= betaPdf(beta, beta_hat)
-        beta_update_prob *= betaPdf(beta_hat, beta_0)
-        beta_update_prob /= betaPdf(beta, beta_0)
-        if np.random.rand() <= beta_update_prob:
-            return beta_hat, True
-        return beta, False
+    def _update_beta(beta, acc_rate, betaRV):
+        'Update beta with a metropolis step. Could be optimized!'
+        #update beta
+        beta = betaRV(max(beta + .1*(acc_rate - .23), .9999))
+        return beta
     
     #this is what actually reconstructs images
     def _update_main(xi, proposal, u, beta, phi, PriorOp, ObservationOp):
@@ -127,11 +121,15 @@ def w_pCN(measurement, ObservationOp, PriorOp, sample_shape, n_iter, beta, phi, 
     #xi
     if not xi: xi = np.random.standard_normal(sample_shape)
     
+    #lengthscale
+    if not xi2: xi2 = np.random.standard_normal(sample_shape)
+    PriorOp_0 = PriorOp
+    
     #beta
-    update_beta_until = 10000
-    beta_0 = .5
+    # update_beta_until = 10000
+    # beta_0 = .9
     sigma = 20
-    betaPdf = lambda x, theta: stats.truncnorm.pdf((x-theta)*sigma, a=-theta*sigma, b=sigma*(1-theta))*sigma
+    # betaPdf = lambda x, theta: stats.truncnorm.pdf((x-theta)*sigma, a=-theta*sigma, b=sigma*(1-theta))*sigma
     betaRV = lambda theta: stats.truncnorm.rvs(-sigma*theta, sigma*(1-theta)) / sigma + theta
     
     #u - the observations
@@ -142,6 +140,10 @@ def w_pCN(measurement, ObservationOp, PriorOp, sample_shape, n_iter, beta, phi, 
     samples = []
     accepted = []
     
+    #discount rate
+    discount_rate = .9
+    discount_scal = discount_rate/(1-discount_rate)
+    disc_acc = 0
     #debug code
     if debug:
         av_acc = 0
@@ -151,30 +153,35 @@ def w_pCN(measurement, ObservationOp, PriorOp, sample_shape, n_iter, beta, phi, 
     #the loop
     for i in range(n_iter):
         
-        #chain for target distribution
-        xi, proposal, u, log_prob, u_acc = _update_main(xi, proposal, u, beta, phi, PriorOp, ObservationOp)       
+        #chain for target distribution on image space
+        xi, proposal, u, log_prob, u_acc = _update_main(xi, proposal, u, beta, phi, PriorOp, ObservationOp)
+
+        #update lengthscale - WIP and ridiculously inefficient!!!
+        xi2_hat = np.sqrt((1-beta**2)) * xi2 + beta * np.random.standard_normal(xi2.shape)
+        amplitude_hat = PriorOp(xi2_hat)
+        PriorOp_hat = partial(PriorTransform, T=T, amplitude=amplitude_hat)
+        log_prob2 = np.sum(PriorOp(xi2_hat)**2 - PriorOp_hat(xi2)**2 + PriorOp_0(xi2_hat)**2 - PriorOp_0(xi2)**2)
+        if np.random.rand() <= np.exp(log_prob + log_prob2):
+            xi2 = xi2_hat
+            PriorOp = PriorOp_hat
         
         #beta update
-        if i < update_beta_until:
-            beta, beta_acc = _update_beta(beta, beta_0, log_prob, betaPdf, betaRV)
-            betas.append(beta)
-        elif i == update_beta_until:
-            beta = np.mean(betas[int(len(betas)*burnin_ratio):])
-            print(i, ' Stopped updating the Jump Parameter at beta = %s'%beta)
+        disc_acc = discount_rate * disc_acc + u_acc
+        beta = _update_beta(beta, disc_acc * discount_scal, betaRV)
+        betas.append(beta)
 
-        #debug messages
-        if i%1000 == 0 or i==1:
-            print('%s Beta: %s, LogProb: %s'%(i, beta, log_prob))
-        
         #store samples
         if i >= n_iter*burnin_ratio:
             samples.append(proposal)
-            accepted.append((u_acc, beta_acc))
+            accepted.append(u_acc)
 
         #debug code
         if debug:
-            av_acc = av_acc +(u_acc-av_acc)/(i+1) # discounted acceptance rate
+            av_acc = av_acc + (u_acc-av_acc)/(i+1) # discounted acceptance rate
             log_probs.append(log_prob)
+            #debug messages
+            if i%1000 == 0 or i==1:
+                print('%s Beta: %s, LogProb: %s, AccProb: %s'%(i, beta, log_prob, disc_acc))
     #debug code
     if debug:
         return samples, accepted, av_acc, xi, log_probs, betas
@@ -203,13 +210,21 @@ if __name__=='__main__':
     xx, yy = np.meshgrid(xx, yy)
     X = np.vstack([xx.ravel(), yy.ravel()]).T
 
-    #make prior
+    #calculate distance matrix with lengthscale
+    lengthScale = 15 * np.ones_like(X.shape)
+    X *= lengthScale
+    dists = cdist(X,X)
+
+    #make kernel for RKHS of Prior space
     T = sqrtm(
         matern_cov(
-            dists=cdist(X,X) * 15,
+            dists=dists,
             nu = 1.5
         )
-    ) * 2
+    ) * np.sqrt(2)
+    
+    #setup prior operator
+    PriorOp = partial(PriorTransform, T=T)
    
     #normalize function values to [-1,1]
     fX, _, _ = center_scale(image)
@@ -238,11 +253,9 @@ if __name__=='__main__':
     
     #setup measurement operator - this is bad for performance, due to function call overhead, but really good for development
     ObservationOp = partial(radon, theta=theta, circle=False)
-    #setup prior operator
-    PriorOp = partial(PriorTransform, T=T)
     
     #run the w_pcn chain
-    samples, accepted, av_acc, xi, log_probs, betas = w_pCN(sinogram, ObservationOp, PriorOp, fX.shape, 50000, .9, phi, burnin_ratio=.2, debug=True)
+    samples, accepted, av_acc, xi, log_probs, betas = w_pCN(sinogram, ObservationOp, PriorOp, fX.shape, X, 50000, .5, phi, T, burnin_ratio=.2, debug=True)
 
     #evaluate markovchain
     av = np.mean(samples, axis=0)
