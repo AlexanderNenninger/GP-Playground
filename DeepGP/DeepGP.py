@@ -97,7 +97,6 @@ def matern_cov(dists, nu):
 
 def w_pCN(measurement, ObservationOp, PriorOp, sample_shape, X, n_iter, beta, phi, T, xi = None, xi2=None, burnin_ratio = 2, debug=False):
     
-
     #define internal functions. cleans up the code
     def _update_beta(beta, acc_rate, betaRV):
         'Update beta with a metropolis step. Could be optimized!'
@@ -156,8 +155,8 @@ def w_pCN(measurement, ObservationOp, PriorOp, sample_shape, X, n_iter, beta, ph
         #chain for target distribution on image space
         xi, proposal, u, log_prob, u_acc = _update_main(xi, proposal, u, beta, phi, PriorOp, ObservationOp)
 
-        #update lengthscale - WIP and ridiculously inefficient!!!
-        xi2_hat = np.sqrt((1-beta**2)) * xi2 + beta * np.random.standard_normal(xi2.shape)
+        #update height - WIP and ridiculously inefficient!!!
+        xi2_hat = np.sqrt(1-beta**2) * xi2 + beta * np.random.standard_normal(xi2.shape)
         amplitude_hat = PriorOp(xi2_hat)
         PriorOp_hat = partial(PriorTransform, T=T, amplitude=amplitude_hat)
         log_prob2 = np.sum(PriorOp(xi2_hat)**2 - PriorOp_hat(xi2)**2 + PriorOp_0(xi2_hat)**2 - PriorOp_0(xi2)**2)
@@ -167,7 +166,7 @@ def w_pCN(measurement, ObservationOp, PriorOp, sample_shape, X, n_iter, beta, ph
         
         #beta update
         disc_acc = discount_rate * disc_acc + u_acc
-        beta = _update_beta(beta, disc_acc * discount_scal, betaRV)
+        #beta = _update_beta(beta, disc_acc * discount_scal, betaRV)
         betas.append(beta)
 
         #store samples
@@ -181,7 +180,7 @@ def w_pCN(measurement, ObservationOp, PriorOp, sample_shape, X, n_iter, beta, ph
             log_probs.append(log_prob)
             #debug messages
             if i%1000 == 0 or i==1:
-                print('%s Beta: %s, LogProb: %s, AccProb: %s'%(i, beta, log_prob, disc_acc))
+                print('%s Beta: %s, LogProb: %s, AccProb: %s'%(i, beta, log_prob, disc_acc / discount_scal))
     #debug code
     if debug:
         return samples, accepted, av_acc, xi, log_probs, betas
@@ -194,8 +193,6 @@ if __name__=='__main__':
     image = imread('data/phantom.png', as_gray=True)
     image = rescale(image, scale=.05, mode='reflect', multichannel=False)
 
-
-    
     #size of sample area - the unit square is a solid choice for the most part, be aware of image dimensions
     sample_area = [(0, 1)]*image.ndim
     
@@ -211,7 +208,7 @@ if __name__=='__main__':
     X = np.vstack([xx.ravel(), yy.ravel()]).T
 
     #calculate distance matrix with lengthscale
-    lengthScale = 15 * np.ones_like(X.shape)
+    lengthScale = 30 * np.ones_like(X.shape)
     X *= lengthScale
     dists = cdist(X,X)
 
@@ -228,6 +225,7 @@ if __name__=='__main__':
    
     #normalize function values to [-1,1]
     fX, _, _ = center_scale(image)
+    fX *= 1
     #transform back to meshgird format 
     Xp, Yp, Zp = plotting.plot_contour(X[:,0], X[:,1], np.ravel(fX))
     
@@ -244,7 +242,7 @@ if __name__=='__main__':
     inv = iradon(sinogram, theta, circle=False)
     inv = rescale(inv, 20, multichannel=False)
     ax[0,1].imshow(inv)
-   
+
     #setup integration steps - the spacing of the measurement points is proportional to 1/image.shape[0] in skimage.radon
     delta = 1/image.shape[0] * 1/theta.max()-theta.min()
     #error functional on the measurements
@@ -255,7 +253,7 @@ if __name__=='__main__':
     ObservationOp = partial(radon, theta=theta, circle=False)
     
     #run the w_pcn chain
-    samples, accepted, av_acc, xi, log_probs, betas = w_pCN(sinogram, ObservationOp, PriorOp, fX.shape, X, 50000, .5, phi, T, burnin_ratio=.2, debug=True)
+    samples, accepted, av_acc, xi, log_probs, betas = w_pCN(sinogram, ObservationOp, PriorOp, fX.shape, X, 1000000, .8, phi, T, burnin_ratio=.1, debug=True)
 
     #evaluate markovchain
     av = np.mean(samples, axis=0)
@@ -267,5 +265,4 @@ if __name__=='__main__':
         'Number of Samples: %s'%(len(samples))
     )
     plt.show()
-   
     pass
