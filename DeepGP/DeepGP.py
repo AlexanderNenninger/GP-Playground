@@ -27,12 +27,14 @@ After Thesis (maybe):
 
 import os
 import sys
+from datetime.datetime import now
 sys.path.append(os.getcwd())
 
 
 import math
 import numpy as np
 from functools import partial
+import pickle as pkl
 
 from scipy.spatial.distance import pdist, cdist as sccdist, squareform
 import scipy.stats as stats
@@ -113,15 +115,14 @@ def w_pCN(measurement, ObservationOp, PriorOp, PriorOpL, sample_shape, X, n_iter
         T:                  Can be removed from signature
         xi:                 Initial State of chain. Will be white noise, if not given
         xi2:                - " -; Need to wrap up in iterable
-        burnin_ratio:       portion of samples kept after MCMC mixes. Choose s.t. n_iter*(1-burnin_ratio)~15,000
+        burnin_ratio:       portion of samples thrown away before MCMC mixes. Choose s.t. n_iter*burnin_ratio~15,000
         debug:              record additional metrics while running the chain. ATTENTION: Changes return values
     '''
     #define nested functions. cleans up the code and protects each update loop
     #performance metrics
     def _KS_test(proposal, samples):
-        sample_dist = np.mean(samples, axis=0)
-        
-        return
+        p_sample = np.mean(samples, axis=0)
+        return np.max(np.abs(p_sample-proposal))
     
     #update parameters
     def _update_beta(beta, acc_rate, target_acc_rate):
@@ -280,7 +281,7 @@ if __name__=='__main__':
     #coordinate list from coodinate vectors
     xx, yy = np.meshgrid(xx, yy)
     X = np.vstack([xx.ravel(), yy.ravel()]).T
-
+    X *= 15 # sensible lengthscale to start at.
     #calculate distance matrix with lengthscale
     dists = cdist(X,X)
 
@@ -328,7 +329,7 @@ if __name__=='__main__':
     
     #setup measurement operator - this is bad for performance, due to function call overhead, but gives a lot of flexibility
     ObservationOp = partial(radon, theta=theta, circle=False)
-    
+    n_iter = 50000
     #run the w_pcn chain - with debug
     samples, accepted, av_acc, xi, log_probs, betas = w_pCN(
         sinogram, 
@@ -337,13 +338,18 @@ if __name__=='__main__':
         PriorOpL, 
         fX.shape, 
         X, 
-        50000, 
+        n_iter, 
         .6, 
         phi, 
         T, 
-        burnin_ratio=.1, 
+        burnin_ratio=.22, 
         debug=True
     )
+    
+    #save results to pickle
+    filename = '%s-%s-%s_niter'%now.isocalendar() + str(n_iter) + '_accProb%s'%np.round(av_acc, -2)
+    with open('output\\'+filename, 'wb') as f:
+        pkl.dump((samples, accepted, av_acc, xi, log_probs, betas), f)
 
     #evaluate reconstruction results results
     av = np.mean(samples, axis=0)
