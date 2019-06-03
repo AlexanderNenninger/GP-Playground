@@ -27,7 +27,7 @@ After Thesis (maybe):
 
 import os
 import sys
-from datetime.datetime import now
+from datetime import datetime
 sys.path.append(os.getcwd())
 
 
@@ -80,6 +80,7 @@ def PriorTransform(fx, T):
 
 ##kernels
 def matern_cov(dists, nu):
+    'Source: Sklearn Gaussian Processes - need to find link'
     if nu == 0.5:
         K = np.exp(-dists)
     elif nu == 1.5:
@@ -98,7 +99,7 @@ def matern_cov(dists, nu):
     return K
 
 
-def w_pCN(measurement, ObservationOp, PriorOp, PriorOpL, sample_shape, X, n_iter, beta, phi, T, xi = None, xi2=None, burnin_ratio = .5, debug=False):
+def w_pCN(measurement, ObservationOp, PriorOp, PriorOpL, sample_shape, X, n_iter, beta, phi, xi = None, xi2=None, burnin_ratio = .5, debug=False):
     '''
     Algorithm
         Function, that drives the MCMC Chain. Has debug functionality built in.
@@ -112,7 +113,6 @@ def w_pCN(measurement, ObservationOp, PriorOp, PriorOpL, sample_shape, X, n_iter
         n_iter:             #iterations the MCMC should run
         beta:               initial value for jump parameter
         phi:                error function - evaluates error between true measurement and measurement of proposal
-        T:                  Can be removed from signature
         xi:                 Initial State of chain. Will be white noise, if not given
         xi2:                - " -; Need to wrap up in iterable
         burnin_ratio:       portion of samples thrown away before MCMC mixes. Choose s.t. n_iter*burnin_ratio~15,000
@@ -120,15 +120,16 @@ def w_pCN(measurement, ObservationOp, PriorOp, PriorOpL, sample_shape, X, n_iter
     '''
     #define nested functions. cleans up the code and protects each update loop
     #performance metrics
-    def _KS_test(proposal, samples):
-        p_sample = np.mean(samples, axis=0)
-        return np.max(np.abs(p_sample-proposal))
+    def _KS_test(samples):
+        p_sample = np.mean(samples[-100:], axis=0).ravel()
+        q_sample = np.mean(samples[-200:-100]).ravel()
+        return np.linalg.norm(p_sample-q_sample, np.inf)/np.prod(p_sample.shape)
     
     #update parameters
     def _update_beta(beta, acc_rate, target_acc_rate):
         'Update beta based on the acceptance rate.'
         beta *= (1 + .1*(acc_rate - .23))
-        return np.clip(beta, np.finfo(np.float32).eps, 1-np.finfo(np.float32).eps)
+        return np.clip(beta, np.finfo(float).eps, 1-np.finfo(float).eps)
     
     #this is what actually reconstructs images
     def _update_main(xi, proposal, u, beta, phi, PriorOp, ObservationOp):
@@ -160,7 +161,8 @@ def w_pCN(measurement, ObservationOp, PriorOp, PriorOpL, sample_shape, X, n_iter
             return xi_hat, proposal_hat, u_hat, log_prob, True
         return xi, proposal, u, log_prob, False
 
-    def _update_lengthscale(xi2, log_prob, beta, Op, PriorOp, X, Op_0):
+    #super expensive to evaluate
+    def _update_lengthscale(xi2, log_prob, beta, Op, PriorOp, X, Op_0, debug=debug):
         '''
         Stream Function  - some variables are just passed on
             Updates the lengthscale based on logprob and the PriorOp.
@@ -175,11 +177,11 @@ def w_pCN(measurement, ObservationOp, PriorOp, PriorOpL, sample_shape, X, n_iter
         Returns
             xi2:        New centerd pCN proposal
             OP:         Updated operator to feed to the layer above
-            log_prob:   log acceptance probablility
+            log_prob2:  log acceptance probablility
             acc:        wether the sample was accepted
         '''
         xi2_hat = np.sqrt(1-beta**2) * xi2 + beta * np.random.standard_normal(xi2.shape)
-        lengthscale_hat = PriorOp(xi2_hat)
+        lengthscale_hat = np.exp(PriorOp(xi2_hat))
         X_hat = X * lengthscale_hat
         dists = cdist(X_hat,X_hat)
         #make kernel for RKHSubspace
@@ -192,11 +194,16 @@ def w_pCN(measurement, ObservationOp, PriorOp, PriorOpL, sample_shape, X, n_iter
         #Update operator with kernel T
         Op_hat = partial(PriorTransform, T=T)
         #evaluate update
-        log_prob += np.sum(Op(xi2_hat)**2 - Op_hat(xi2)**2 + Op_0(xi2_hat)**2 - Op_0(xi2)**2)
-        log_prob = min(log_prob, 0)
+        log_prob2 = log_prob - np.sum(Op(xi2_hat)**2 + Op_hat(xi2)**2 - Op_0(xi2_hat)**2 + Op_0(xi2)**2)/2 ###Wrong densities. Need to fix!
+        log_prob2 = min(log_prob2, 0)
+        #verbose return values for debug
+        if debug:
+            if np.random.rand() <= np.exp(log_prob):
+                return xi2_hat, Op_hat, log_prob2, True, lengthscale_hat
+            return xi2, Op, log_prob2, False , lengthscale_hat
         if np.random.rand() <= np.exp(log_prob):
-            return xi2_hat, Op_hat, log_prob, True
-        return xi2, Op, log_prob, False
+            return xi2_hat, Op_hat, log_prob2, True
+        return xi2, Op, log_prob2, False
 
     #initialize variables
     #xi
@@ -209,6 +216,7 @@ def w_pCN(measurement, ObservationOp, PriorOp, PriorOpL, sample_shape, X, n_iter
     
     #beta
     beta = beta or .5
+    beta2 = beta or .5
     target_acc_rate = .23
     
     #u - the observations, proposal: the reconstruction data
@@ -219,16 +227,21 @@ def w_pCN(measurement, ObservationOp, PriorOp, PriorOpL, sample_shape, X, n_iter
     samples = []
     accepted = []
     
-    #discount rate
-    discount_rate = .99
-    discount_scal = (1-discount_rate)/discount_rate
-    disc_acc = 0
+    #discount rate - it is important, how beta is initialized
+    discount_rate = .95
+    discount_scal = (1-discount_rate)
+    disc_acc = .23
+    disc_lacc = .23
     
     #debug code
     if debug:
         av_acc = 0
         log_probs = []
         betas = []
+        lengthscale = np.ones((X.shape[0],1)) * 10
+        lengthscales = []
+        proposals = []
+
     
     #the loop
     for i in range(n_iter):
@@ -236,29 +249,43 @@ def w_pCN(measurement, ObservationOp, PriorOp, PriorOpL, sample_shape, X, n_iter
         #chain for target distribution on image space
         xi, proposal, u, log_prob, u_acc = _update_main(xi, proposal, u, beta, phi, PriorOp, ObservationOp)
 
-        xi2, PriorOp, log_prob2, l_acc = _update_lengthscale(xi2, log_prob, beta, PriorOp, PriorOpL, X, PriorOp_0)
+        xi2, PriorOp, log_prob2, l_acc, lengthscale_hat = _update_lengthscale(xi2, log_prob, beta2, PriorOp, PriorOpL, X, PriorOp_0, debug=debug)
         
-        #store samples
+        #store samples - maybe replace this with kolmogorov-smirnov test
         if i >= n_iter*burnin_ratio:
             samples.append(proposal)
             accepted.append(u_acc)
+            target_acc_rate = .5 #increase target acceptance rate when chain is in equilibrium
 
         if i%100 == 0:
             #beta update every 100 iterations
-            disc_acc = discount_rate * disc_acc + u_acc
+            disc_acc = discount_rate * disc_acc + u_acc #discounted acceptance rate
+            disc_lacc = discount_rate * disc_lacc + l_acc
             beta = _update_beta(beta, disc_acc * discount_scal, target_acc_rate)
+            beta2 = _update_beta(beta2, disc_lacc * discount_scal, target_acc_rate)
             betas.append(beta)
         
         #debug code
         if debug:
-            av_acc = av_acc + (u_acc-av_acc)/(i+1) # discounted acceptance rate
+            #lengthscale logging
+            if l_acc:
+                lengthscales.append(lengthscale_hat)
+                lengthscale = lengthscale_hat
+            else:
+                lengthscales.append(lengthscale)
+            #proposal logging
+            proposals.append(proposal)            
+            #acceptance rate
+            av_acc = av_acc + (u_acc-av_acc)/(i+1)
             log_probs.append(log_prob)
             #debug messages
-            if i%10 == 0 or i==1:
-                print('%s Beta: %s, LogProb: %s, AccProb: %s'%(i, beta, log_prob, disc_acc * discount_scal))
+            if i%100 == 0 or i==1:
+                print(
+                    '%s\n beta(1,2): %s\n acceptance rate: %s\n discounted acceptance rate: %s\n Kolmogorov-Smirnow: %s'%(i, (beta, beta2), av_acc, disc_acc * discount_scal, _KS_test(proposals))
+                )
     #debug code
     if debug:
-        return samples, accepted, av_acc, xi, log_probs, betas
+        return samples, accepted, av_acc, xi, log_probs, betas, lengthscales , proposals
    
     return samples, accepted
 
@@ -281,7 +308,7 @@ if __name__=='__main__':
     #coordinate list from coodinate vectors
     xx, yy = np.meshgrid(xx, yy)
     X = np.vstack([xx.ravel(), yy.ravel()]).T
-    X *= 15 # sensible lengthscale to start at.
+    X *= 10 # sensible lengthscale to start at.
     #calculate distance matrix with lengthscale
     dists = cdist(X,X)
 
@@ -297,7 +324,7 @@ if __name__=='__main__':
     PriorOp = partial(PriorTransform, T=T)
 
     #prior operator for lengthscale - only coincidentally the same as above
-    PriorOpL = partial(PriorTransform, T=T)
+    PriorOpL = partial(PriorTransform, T=np.copy(T))
    
     #normalize function values to [-1,1], makes estimating scale unnecessary. We know, that f in [0,255]
     fX, _, _ = center_scale(image)
@@ -329,9 +356,10 @@ if __name__=='__main__':
     
     #setup measurement operator - this is bad for performance, due to function call overhead, but gives a lot of flexibility
     ObservationOp = partial(radon, theta=theta, circle=False)
-    n_iter = 50000
+    
     #run the w_pcn chain - with debug
-    samples, accepted, av_acc, xi, log_probs, betas = w_pCN(
+    n_iter = 50000
+    samples, accepted, av_acc, xi, log_probs, betas, lengthscales, proposals = w_pCN(
         sinogram, 
         ObservationOp, 
         PriorOp, 
@@ -341,24 +369,25 @@ if __name__=='__main__':
         n_iter, 
         .6, 
         phi, 
-        T, 
-        burnin_ratio=.22, 
+        burnin_ratio=.2, 
         debug=True
     )
     
     #save results to pickle
-    filename = '%s-%s-%s_niter'%now.isocalendar() + str(n_iter) + '_accProb%s'%np.round(av_acc, -2)
-    with open('output\\'+filename, 'wb') as f:
-        pkl.dump((samples, accepted, av_acc, xi, log_probs, betas), f)
+    filename = '%s_n'%datetime.now().replace(microsecond=0).isoformat().replace(':','-') + str(n_iter) + '_accProb%s'%np.round(av_acc*100).astype(int)
+    with open('output\\' + filename + '%.pkl', 'wb') as f:
+        pkl.dump((samples, accepted, av_acc, xi, log_probs, betas, lengthscales, proposals), f)
 
     #evaluate reconstruction results results
-    av = np.mean(samples, axis=0)
-    av = rescale(av, 20, multichannel=False)
-    ax[1,0].imshow(av)
-    ax[1,1].plot(betas)
+    avp = np.mean(samples, axis=0)
+    avp = rescale(avp, 20, multichannel=False)
+    avl = np.mean(lengthscales, axis=0).reshape(20,20)
+    ax[1,0].imshow(avp)
+    ax[1,1].imshow(avl)
     print(
         ' Acceptance Probability: %s \n'%(np.mean(accepted),),
         'Number of Samples: %s'%(len(samples))
     )
+    plt.savefig('plots\\'+ filename + '%.png', dpi=300)
     plt.show()
     pass
