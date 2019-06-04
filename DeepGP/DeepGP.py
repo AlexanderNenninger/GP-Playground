@@ -128,7 +128,7 @@ def w_pCN(measurement, ObservationOp, PriorOp, PriorOpL, sample_shape, X, n_iter
     #update parameters
     def _update_beta(beta, acc_rate, target_acc_rate):
         'Update beta based on the acceptance rate.'
-        beta *= (1 + .1*(acc_rate - .23))
+        beta *= (1 + .01*(acc_rate - .23))
         return np.clip(beta, np.finfo(float).eps, 1-np.finfo(float).eps)
     
     #this is what actually reconstructs images
@@ -181,7 +181,7 @@ def w_pCN(measurement, ObservationOp, PriorOp, PriorOpL, sample_shape, X, n_iter
             acc:        wether the sample was accepted
         '''
         xi2_hat = np.sqrt(1-beta**2) * xi2 + beta * np.random.standard_normal(xi2.shape)
-        lengthscale_hat = np.exp(PriorOp(xi2_hat))
+        lengthscale_hat = np.exp(PriorOp(xi2_hat)).clip(1, 1000)
         X_hat = X * lengthscale_hat
         dists = cdist(X_hat,X_hat)
         #make kernel for RKHSubspace
@@ -194,7 +194,7 @@ def w_pCN(measurement, ObservationOp, PriorOp, PriorOpL, sample_shape, X, n_iter
         #Update operator with kernel T
         Op_hat = partial(PriorTransform, T=T)
         #evaluate update
-        log_prob2 = log_prob - np.sum(Op(xi2_hat)**2 + Op_hat(xi2)**2 - Op_0(xi2_hat)**2 + Op_0(xi2)**2)/2 ###Wrong densities. Need to fix!
+        log_prob2 = log_prob + np.sum(Op(xi2_hat)**2 - Op_hat(xi2)**2 + Op_0(xi2_hat)**2 - Op_0(xi2)**2)/2 ###Wrong densities. Need to fix!
         log_prob2 = min(log_prob2, 0)
         #verbose return values for debug
         if debug:
@@ -228,8 +228,8 @@ def w_pCN(measurement, ObservationOp, PriorOp, PriorOpL, sample_shape, X, n_iter
     accepted = []
     
     #discount rate - it is important, how beta is initialized
-    discount_rate = .95
-    discount_scal = (1-discount_rate)
+    discount_rate = .98
+    discount_scal = 0
     disc_acc = .23
     disc_lacc = .23
     
@@ -250,20 +250,23 @@ def w_pCN(measurement, ObservationOp, PriorOp, PriorOpL, sample_shape, X, n_iter
         xi, proposal, u, log_prob, u_acc = _update_main(xi, proposal, u, beta, phi, PriorOp, ObservationOp)
 
         xi2, PriorOp, log_prob2, l_acc, lengthscale_hat = _update_lengthscale(xi2, log_prob, beta2, PriorOp, PriorOpL, X, PriorOp_0, debug=debug)
-        
+        # l_acc = .5
+        # lengthscale_hat = np.ones((X.shape[0],1))
+
         #store samples - maybe replace this with kolmogorov-smirnov test
         if i >= n_iter*burnin_ratio:
             samples.append(proposal)
             accepted.append(u_acc)
             target_acc_rate = .5 #increase target acceptance rate when chain is in equilibrium
-
-        if i%100 == 0:
+        
+        discount_scal += discount_rate**i
+        disc_acc = discount_rate * disc_acc + u_acc #discounted acceptance rate
+        disc_lacc = discount_rate * disc_lacc + l_acc
+        if i%10 == 0:
             #beta update every 100 iterations
-            disc_acc = discount_rate * disc_acc + u_acc #discounted acceptance rate
-            disc_lacc = discount_rate * disc_lacc + l_acc
-            beta = _update_beta(beta, disc_acc * discount_scal, target_acc_rate)
-            beta2 = _update_beta(beta2, disc_lacc * discount_scal, target_acc_rate)
-            betas.append(beta)
+            beta = _update_beta(beta, disc_acc / discount_scal, target_acc_rate)
+            beta2 = _update_beta(beta2, disc_lacc / discount_scal, target_acc_rate)            
+            betas.append(beta, beta2)
         
         #debug code
         if debug:
@@ -279,9 +282,12 @@ def w_pCN(measurement, ObservationOp, PriorOp, PriorOpL, sample_shape, X, n_iter
             av_acc = av_acc + (u_acc-av_acc)/(i+1)
             log_probs.append(log_prob)
             #debug messages
-            if i%100 == 0 or i==1:
+            if i%100 == 0:
                 print(
-                    '%s\n beta(1,2): %s\n acceptance rate: %s\n discounted acceptance rate: %s\n Kolmogorov-Smirnow: %s'%(i, (beta, beta2), av_acc, disc_acc * discount_scal, _KS_test(proposals))
+    '''%s\n beta(1,2): %s
+    acceptance rate: %s
+    discounted acceptance rate: %s
+    Kolmogorov-Smirnow: %s'''%(i, (beta, beta2), av_acc, disc_acc / discount_scal, _KS_test(proposals))
                 )
     #debug code
     if debug:
@@ -294,7 +300,10 @@ if __name__=='__main__':
     #load image
     image = imread('data/phantom.png', as_gray=True)
     image = rescale(image, scale=.05, mode='reflect', multichannel=False)
-
+    
+    #normalize function values to [-1,1], makes estimating scale unnecessary. We know, that f in [0,255]
+    fX, _, _ = center_scale(image)
+    
     #size of sample area - the unit square is a solid choice for the most part, be aware of image dimensions
     sample_area = [(0, 1)]*image.ndim
     
@@ -308,7 +317,7 @@ if __name__=='__main__':
     #coordinate list from coodinate vectors
     xx, yy = np.meshgrid(xx, yy)
     X = np.vstack([xx.ravel(), yy.ravel()]).T
-    X *= 10 # sensible lengthscale to start at.
+    X *= 5 # sensible lengthscale to start with
     #calculate distance matrix with lengthscale
     dists = cdist(X,X)
 
@@ -326,16 +335,9 @@ if __name__=='__main__':
     #prior operator for lengthscale - only coincidentally the same as above
     PriorOpL = partial(PriorTransform, T=np.copy(T))
    
-    #normalize function values to [-1,1], makes estimating scale unnecessary. We know, that f in [0,255]
-    fX, _, _ = center_scale(image)
-    fX *= 1
     #transform back to meshgird format
     Xp, Yp, Zp = plotting.plot_contour(X[:,0], X[:,1], np.ravel(fX))
-    
-    #make contour plot - it's easy to spot errors this way
-    fig, ax = plt.subplots(nrows=2, ncols=2)
-    ax[0,0].contourf(Xp, Yp, Zp)
-       
+           
     #take measurements
     theta = np.linspace(0, 180, 10, endpoint=True)
     sinogram = radon(fX, theta, circle=False)
@@ -345,11 +347,9 @@ if __name__=='__main__':
     
     #check quality of inversion via back projections
     inv = iradon(sinogram, theta, circle=False)
-    inv = rescale(inv, 20, multichannel=False)
-    ax[0,1].imshow(inv)
 
     #setup integration steps - the spacing of the measurement points is proportional to 1/image.shape[0] in skimage.radon
-    delta = 1/image.shape[0] * 1/theta.max()-theta.min()
+    delta = 1/image.shape[0] * 1/(theta.max()-theta.min()) * 5
     #error function on the measurements
     _phi = lambda x,y,dx: np.sum((x-y)**2) * dx
     phi = partial(_phi, dx=delta)
@@ -380,10 +380,15 @@ if __name__=='__main__':
 
     #evaluate reconstruction results results
     avp = np.mean(samples, axis=0)
-    avp = rescale(avp, 20, multichannel=False)
-    avl = np.mean(lengthscales, axis=0).reshape(20,20)
+    avl = np.mean(lengthscales, axis=0).reshape((avp.shape[0], -1))
+    
+    #plot stuff
+    plt.clf()
+    fig, ax = plt.subplots(nrows=2, ncols=2)
+    ax[0,0].cplt.imshow(image)
     ax[1,0].imshow(avp)
     ax[1,1].imshow(avl)
+    ax[0,1].imshow(inv)
     print(
         ' Acceptance Probability: %s \n'%(np.mean(accepted),),
         'Number of Samples: %s'%(len(samples))
