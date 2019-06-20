@@ -4,39 +4,34 @@ from matplotlib import pyplot as plt
 from operators import mOp, CovOp
 from logPdfs import lognorm_pdf
 
-	
-
 'small function for updating beta'
 def update_beta(beta, acc_prob, target):
 	beta += .001*(acc_prob-target)
 	return np.clip(beta, 2**(-15), 1-2**(-15))
 
-
-def measure(T, x):
-	m = [t(x) for t in T]
-	return np.array(m)
-
-dim = 100
+ndim = 1
+size = 100
+shape = (size,)*ndim
 
 eta = np.random.standard_normal()
 h = np.exp(eta)
 
-C = CovOp((dim,dim), h, ro = .1)
-C_hat = CovOp((dim, dim), h, ro = .1)
+C = CovOp(ndim, size, sigma=10, ro=.1)
+C_hat = CovOp(ndim, size, sigma=1, ro=.1)
 
-T = mOp(dim, .5, .1)
-dm = 1
+mean = (.5,)*ndim
+T = mOp(ndim, size, mean, sigma=.02)
 
-xi = np.random.standard_normal(dim)
+xi = np.random.standard_normal(shape)
 u = C(xi)
 
-plt.plot(u)
-plt.plot(T.filter)
+fig, ax = plt.subplots(1,2)
+ax[0].plot(u)
+ax[1].plot(T.F)
 plt.show()
-plt.clf()
 
 m = T(u)
-print(m)
+print('Measurement: <%s> %s'%(mean, m))
 
 beta_0 = .5
 beta_1 = .5
@@ -45,19 +40,19 @@ samples = []
 probs = []
 betas  = []
 
+dx = 1/size**ndim
 phi = lambda x, y, dx: np.sum((x-y)**2) * dx
 
-y = 100
+y = -100
 	
-for i in range(100000):
-	
+for i in range(50000):
 	#base layer
-	xi_hat = np.sqrt(1-beta_0**2)*xi + beta_0*np.random.standard_normal(dim)
+	xi_hat = np.sqrt(1-beta_0**2)*xi + beta_0*np.random.standard_normal(shape)
 
 	u_hat = C(xi_hat)
 	m_hat = T(u_hat)
 	
-	logProb_0 = min(phi(m,y,dm) - phi(m_hat,y,dm), 0)
+	logProb_0 = min(phi(m, y, dx) - phi(m_hat, y, dx), 0)
 
 	if np.random.rand() <= np.exp(logProb_0):
 		xi = xi_hat
@@ -65,12 +60,12 @@ for i in range(100000):
 		m = m_hat
 	
 	#second layer
-	eta_hat = np.sqrt(1-beta_1**2)*eta + beta_1*np.random.standard_normal()
+	eta_hat = np.sqrt(1 - beta_1**2) * eta + beta_1 * np.random.standard_normal()
 	
 	h_hat = np.exp(eta_hat)
 	C_hat.sigma = h_hat
 	
-	logProb_1 = phi(T(C(xi)), y, dm) - phi(T(C_hat(xi)), y, dm)
+	logProb_1 = phi(T(C(xi)), y, dx) - phi(T(C_hat(xi)), y, dx)
 	logProb_1 += lognorm_pdf(h_hat,h) - lognorm_pdf(h,h_hat) 
 	logProb_1 += lognorm_pdf(h_hat,1) - lognorm_pdf(h,1)
 	logProb_1 = min(logProb_1, 0)
@@ -99,20 +94,20 @@ for i in range(100000):
 	betas.append((beta_0, beta_1))
 
 print('acc prob ', np.mean(probs, axis=0))
+print('2nd Layer:', np.mean([x[1] for x in samples]), end='	')
 
 mean = np.mean([x[0] for x in samples], axis=0)
 std = np.std([x[0] for x in samples], axis=0)
 
-plt.plot(mean)
-plt.plot(mean+std, 'g--')
-plt.plot(mean-std, 'g--')
-plt.show()
-plt.clf()
+fig, ax = plt.subplots(2, 2)
 
-plt.plot([x[1] for x in samples])
-plt.title('Height Scale')
-plt.show()
-plt.clf()
+ax[0,0].plot(mean)
+ax[0,0].plot(mean + std, 'g--')
+ax[0,0].plot(mean - std, 'g--')
 
-plt.plot(betas)
+ax[0,1].plot(betas)
+
+ax[1,0].plot([x[1] for x in samples])
+ax[1,1].hist([x[1] for x in samples])
+
 plt.show()
