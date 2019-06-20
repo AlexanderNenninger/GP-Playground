@@ -22,24 +22,36 @@ class mOp(object):
 
 	def __call__(self, x):
 		return np.sum(self.filter*x)/x.shape[0]
-		
+
 class CovOp(object):
-	'L_p[0,1]->L_p[0,1]'
-	s = 1
-	r = 1
-	k = np.zeros((1,1))
-	g = lambda x: np.exp(-x/r)
+    'L_p[0,1]^ndim->L_p[0,1]^ndim'
+    def __init__(self, ndim, size, sigma=1, ro=1):
+        self.ndim = ndim
+        self.size = size
+        self.shape = (size,)*2**ndim
+        self.C = np.zeros(self.shape)
+        self.ro = ro * size
+        self.sigma = sigma
+        self.f = lambda r: (1 + np.sqrt(3)*r / self.ro) * np.exp(-np.sqrt(3) * r / self.ro)
+        self.update_tensor()
 	
-	def __init__(self, shape, sigma=s, ro=r):
-		self.ker = np.zeros(shape)
-		self.ro = ro * shape[0]
-		self.sigma = sigma
-		self.f = lambda r: np.exp(-r/self.ro)
-		
-		for i in range(shape[0]):
-			for j in range(shape[1]):
-				self.ker[i,j] = self.f(np.abs(i-j))
-		self.ker = np.linalg.cholesky(self.ker)
-	
-	def __call__(self, x):
-		return self.sigma * np.dot(self.ker,x)
+    def __call__(self, x):
+        return self.sigma * np.tensordot(self.C, x)
+    
+    def update_tensor(self):
+        it = np.nditer(self.C, flags=['multi_index'], op_flags=['readwrite'])
+        while not it.finished:
+            idx = np.array(it.multi_index)
+            d = np.linalg.norm(idx[:idx.shape[0]//2] - idx[idx.shape[0]//2:])
+            it[0] = self.f(d)
+            it.iternext()
+
+if __name__=='__main__':
+    import matplotlib.pyplot as plt
+    size = 10
+    ndim = 2
+    x = np.random.standard_normal((size,)*ndim)
+    C = CovOp(ndim, size, 10, .2)
+    plt.imshow(C(x))
+    plt.show()
+    
