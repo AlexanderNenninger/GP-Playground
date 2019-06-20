@@ -13,8 +13,8 @@ Ideas:
 Next Steps:
     1. Modularize the code more, so functionality is easily added - done
     2. Implement idea Nr.2 - done
-    3. Implement Idea Nr.4
-    5. Document Code
+    3. Implement Idea Nr.4 - done
+    5. Document Code - done
     
 After Thesis (maybe): 
     1. Implement different Priors - Besov is an option!; Might need to switch to basis representations of the space then.
@@ -99,7 +99,7 @@ def matern_cov(dists, nu):
     return K
 
 
-def w_pCN(measurement, ObservationOp, PriorOp, PriorOpL, sample_shape, X, n_iter, beta, phi, xi = None, xi2=None, burnin_ratio = .5, debug=False):
+def w_pCN(measurement, ObservationOp, PriorOp, PriorOpL, sample_shape, X, n_iter, beta, phi, xi = None, xi2=None, scale=None, burnin_ratio = .5, debug=False):
     '''
     Algorithm
         Function, that drives the MCMC Chain. Has debug functionality built in.
@@ -162,12 +162,12 @@ def w_pCN(measurement, ObservationOp, PriorOp, PriorOpL, sample_shape, X, n_iter
         return xi, proposal, u, log_prob, False
 
     #super expensive to evaluate
-    def _update_lengthscale(xi2, log_prob, beta, Op, PriorOp, X, Op_0, debug=debug):
+    def _update_lengthscale(xi, scale, log_prob, beta, Op, PriorOp, X, Op_0, debug=debug):
         '''
         Stream Function  - some variables are just passed on
             Updates the lengthscale based on logprob and the PriorOp.
         Takes
-            xi2:        previous centered gaussian noise proposal
+            xi:        previous centered gaussian noise proposal
             logprob:    the logprob from the previous layer
             beta:       jump parameter - Is it ok to use the same across layers? if not, how to adapt mutually decide differently?
             Op:         The Operator, that will be updated
@@ -175,13 +175,14 @@ def w_pCN(measurement, ObservationOp, PriorOp, PriorOpL, sample_shape, X, n_iter
             X:          Compact D in R^d. Represented as a point list.
             Op_0:       The start configuration of the operator, that this function updates
         Returns
-            xi2:        New centerd pCN proposal
+            xi:        New centerd pCN proposal
             OP:         Updated operator to feed to the layer above
             log_prob2:  log acceptance probablility
             acc:        wether the sample was accepted
         '''
-        xi2_hat = np.sqrt(1-beta**2) * xi2 + beta * np.random.standard_normal(xi2.shape)
-        lengthscale_hat = np.exp(PriorOp(xi2_hat)).clip(1, 1000)
+        xi_hat = np.sqrt(1-beta**2) * xi + beta * np.random.standard_normal(xi.shape)
+        scale_hat = np.sqrt(1-beta**2) * scale + beta * np.random.standard_normal()
+        lengthscale_hat = np.exp(PriorOp(xi_hat)).clip(.1, 1000)
         X_hat = X * lengthscale_hat
         dists = cdist(X_hat,X_hat)
         #make kernel for RKHSubspace
@@ -190,28 +191,30 @@ def w_pCN(measurement, ObservationOp, PriorOp, PriorOpL, sample_shape, X, n_iter
                 dists=dists,
                 nu = 1.5
             )
-        ) * 1.5
+        ) *1.5#* np.exp(scale_hat)
         #Update operator with kernel T
         Op_hat = partial(PriorTransform, T=T)
         #evaluate update
-        log_prob2 = log_prob + np.sum(Op(xi2_hat)**2 - Op_hat(xi2)**2 + Op_0(xi2_hat)**2 - Op_0(xi2)**2)/2 ###Wrong densities. Need to fix!
+        log_prob2 = log_prob + np.sum(Op(xi_hat)**2 - Op_hat(xi)**2 + Op_0(xi_hat)**2 - Op_0(xi)**2)/2
         log_prob2 = min(log_prob2, 0)
         #verbose return values for debug
         if debug:
             if np.random.rand() <= np.exp(log_prob):
-                return xi2_hat, Op_hat, log_prob2, True, lengthscale_hat
-            return xi2, Op, log_prob2, False , lengthscale_hat
+                return xi_hat, scale_hat, Op_hat, log_prob2, True, lengthscale_hat
+            return xi, scale, Op, log_prob2, False , lengthscale_hat
         if np.random.rand() <= np.exp(log_prob):
-            return xi2_hat, Op_hat, log_prob2, True
-        return xi2, Op, log_prob2, False
+            return xi_hat, scale_hat,  Op_hat, log_prob2, True
+        return xi, scale, Op, log_prob2, False
+
 
     #initialize variables
     #xi
     if not xi: xi = np.random.standard_normal(sample_shape)
-    
     #lengthscale
-    if not xi2: xi2 = np.random.standard_normal((X.shape[0],1))
+    if not xi: xi = np.random.standard_normal((X.shape[0],1))
     PriorOp_0 = PriorOp
+    #scale
+    if not scale: scale = np.random.standard_normal()
     
     
     #beta
@@ -241,7 +244,7 @@ def w_pCN(measurement, ObservationOp, PriorOp, PriorOpL, sample_shape, X, n_iter
         lengthscale = np.ones((X.shape[0],1)) * 10
         lengthscales = []
         proposals = []
-
+        scales = []
     
     #the loop
     for i in range(n_iter):
@@ -249,7 +252,7 @@ def w_pCN(measurement, ObservationOp, PriorOp, PriorOpL, sample_shape, X, n_iter
         #chain for target distribution on image space
         xi, proposal, u, log_prob, u_acc = _update_main(xi, proposal, u, beta, phi, PriorOp, ObservationOp)
 
-        xi2, PriorOp, log_prob2, l_acc, lengthscale_hat = _update_lengthscale(xi2, log_prob, beta2, PriorOp, PriorOpL, X, PriorOp_0, debug=debug)
+        xi2, scale, PriorOp, log_prob2, l_acc, lengthscale_hat = _update_lengthscale(xi2, scale, log_prob, beta2, PriorOp, PriorOpL, X, PriorOp_0, debug=debug)
         # l_acc = .5
         # lengthscale_hat = np.ones((X.shape[0],1))
 
@@ -257,7 +260,6 @@ def w_pCN(measurement, ObservationOp, PriorOp, PriorOpL, sample_shape, X, n_iter
         if i >= n_iter*burnin_ratio:
             samples.append(proposal)
             accepted.append(u_acc)
-            target_acc_rate = .5 #increase target acceptance rate when chain is in equilibrium
         
         discount_scal += discount_rate**i
         disc_acc = discount_rate * disc_acc + u_acc #discounted acceptance rate
@@ -266,7 +268,7 @@ def w_pCN(measurement, ObservationOp, PriorOp, PriorOpL, sample_shape, X, n_iter
             #beta update every 100 iterations
             beta = _update_beta(beta, disc_acc / discount_scal, target_acc_rate)
             beta2 = _update_beta(beta2, disc_lacc / discount_scal, target_acc_rate)            
-            betas.append(beta, beta2)
+            betas.append((beta, beta2))
         
         #debug code
         if debug:
@@ -276,6 +278,7 @@ def w_pCN(measurement, ObservationOp, PriorOp, PriorOpL, sample_shape, X, n_iter
                 lengthscale = lengthscale_hat
             else:
                 lengthscales.append(lengthscale)
+            scales.append(scale)
             #proposal logging
             proposals.append(proposal)            
             #acceptance rate
@@ -327,7 +330,7 @@ if __name__=='__main__':
             dists=dists,
             nu = 1.5
         )
-    ) * 1.5
+    ) * np.sqrt(2)
     
     #setup prior operator
     PriorOp = partial(PriorTransform, T=T)
@@ -385,7 +388,7 @@ if __name__=='__main__':
     #plot stuff
     plt.clf()
     fig, ax = plt.subplots(nrows=2, ncols=2)
-    ax[0,0].cplt.imshow(image)
+    ax[0,0].imshow(image)
     ax[1,0].imshow(avp)
     ax[1,1].imshow(avl)
     ax[0,1].imshow(inv)
