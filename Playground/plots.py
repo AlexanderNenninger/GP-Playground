@@ -7,11 +7,16 @@ import numpy as np
 
 import pickle as pkl
 
-fName = 'output\\2019-22-7_niter50000_accProb24%.pkl'
+# matplotlib.use('pdf')
+
+fieldNames = ('samples', 'accepted', 'av_acc', 'xi', 'log_probs', 'betas', 'lengthscales' , 'proposals')
+fName = 'output\\2019-06-04T12-15-51_n50000_accProb23%.pkl'
+
 with open(fName, 'rb') as f:
     data = pkl.load(f)
+    data = dict(zip(fieldNames, data))
+pass
 
-# matplotlib.use('pdf')
 
 # image = imread('data/phantom.png', as_gray=True)
 # plt.imshow(image)
