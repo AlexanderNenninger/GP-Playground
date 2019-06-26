@@ -22,137 +22,136 @@ After Thesis (maybe):
     3. Optimize regularization parameter
     4. Use a coarser tiling for deeper layers
 '''
+import copy
+from pathlib import Path
 
 import numpy as np
 from matplotlib import pyplot as plt
+#from scipy.stats import lognorm
 
-from operators import mOp, CovOp
-from logPdfs import lognorm_pdf
+from operators import mOp, CovOp, mDevice, RadonTransform
+from logPdfs import lognorm_pdf, exp_pdf, log_acceptance_ratio
 import dataLoading
+import plotting
 
-'small function for updating beta'
 def update_beta(beta, acc_prob, target):
-	beta += .001*(acc_prob-target)
+	'small function for updating beta'
+	beta += .01*(acc_prob-target)
 	return np.clip(beta, 2**(-15), 1-2**(-15))
 
-def measure(T, x):
-	'Makes measureing multiple values easy'
-	if type(T) == mOp:
-		return T(x)
-	m = [t(x) for t in T]
-	return np.array(m)
-
-size = 100
-
-# image = dataLoading.import_image(size=size)
-
-ndim = 1
-shape = (size,)*ndim
-
-eta = np.random.standard_normal()
-h = np.exp(eta)
-
-C = CovOp(ndim, size, sigma=2, ro=.1)
-C_hat = CovOp(ndim, size, sigma=2, ro=.1)
-
-
-means = np.array([
-	(.5, .5)#,	(.25, .5), (.25, .75),
-	# (.5, .25), (.5, .5), (.5, .75),
-	# (.75, .25), (.75, .5), (.75, .75),
-])
-
-T = [mOp(ndim, size, mean, sigma=.1) for mean in means]
-
-y = 15 #measure(T, image)
-print('Data:', y, end='	\n')
-
-xi = np.random.standard_normal(shape)
-u = C(xi)
-
-fig, ax = plt.subplots(2,2)
-# ax[0,0].imshow(image, cmap='Greys_r')
-ax[1,0].plot(u)
-# ax[0,1].scatter(means[:,0], means[:,1], c=y)
-plt.show()
-
-m = measure(T, u)
-print('Measurement:\n <%s> \n %s'%(means, m))
-
-beta_0 = .5
-beta_1 = .5
-
-samples = []
-probs = []
-betas  = []
-
-dx = 1/size**ndim
-phi = lambda x, y, dx: np.sum((x-y)**2) * dx * 100
-
+class wpCN(object):
 	
-for i in range(50000):
-	#base layer
-	xi_hat = np.sqrt(1-beta_0**2)*xi + beta_0*np.random.standard_normal(shape)
+	def __init__(self, ndim, size, Covariance: CovOp, T: mDevice):
+		self.data = data
+		self.ndim = ndim
+		self.size = size
+		self.shape = (size,)*ndim
+		self.C = Covariance
+		self.C_hat = copy.deepcopy(self.C)
+		self.C_2 = CovOp(1,1,1,.1)
+		self.T = T
 
-	u_hat = C(xi_hat)
-	m_hat = measure(T, u_hat)
-	
-	logProb_0 = min(phi(m, y, dx) - phi(m_hat, y, dx), 0)
-
-	if np.random.rand() <= np.exp(logProb_0):
-		xi = xi_hat
-		u = u_hat
-		m = m_hat
-	
-	#second layer
-	eta_hat = np.sqrt(1 - beta_1**2) * eta + beta_1 * np.random.standard_normal()
-	
-	h_hat = np.exp(eta_hat)
-	C_hat.sigma = h_hat
-	
-	logProb_1 = phi(measure(T, C(xi)), y, dx) - phi(measure(T, C_hat(xi)), y, dx)
-	logProb_1 += lognorm_pdf(h_hat,h) - lognorm_pdf(h,h_hat) 
-	logProb_1 += lognorm_pdf(h_hat,1) - lognorm_pdf(h,1)
-	logProb_1 = min(logProb_1, 0)
-	
-	if np.random.rand() <= np.exp(logProb_1):
-		eta = eta_hat
-		h = h_hat
-	C.sigma = h
-	
-	beta_0 = update_beta(
-		beta_0,
-		np.exp(logProb_0),
-		.23
-	)
-	
-	beta_1 = update_beta(
-		beta_1,
-		np.exp(logProb_1),
-		.23
-	)
+		self.dx = 1/T.len
+		self.phi = lambda x, y: np.sum((x-y)**2) * self.dx
 		
-	samples.append((u, C.sigma))
-	probs.append(
-		(np.exp(logProb_0), np.exp(logProb_1))
-	)
-	betas.append((beta_0, beta_1))
+		self.xi = np.random.standard_normal(shape)
+		self.u = C(self.xi)
+		self.m = T(self.u)
 
-print('acc prob ', np.mean(probs, axis=0))
-print('2nd Layer:', np.mean([x[1] for x in samples]), end='	')
+		self.Temperature = 1
 
-mean = np.mean([x[0] for x in samples], axis=0)
-std = np.std([x[0] for x in samples], axis=0)
+		self.xi_1 = np.random.standard_normal(1)
 
-fig, ax = plt.subplots(2, 2)
+		self.beta = (.5, .5)
+		self.samples = []
+		self.probs = []
+		self.betas  = []
+		self.data = []
 
-ax[0,0].plot(mean)
-ax[0,0].plot(mean + std, 'g--')
-ax[0,0].plot(mean - std, 'g--')
+	
+	def _0_layer(self, data):
+		#base layer
+		xi_hat = np.sqrt(1 - self.beta[0]**2) * self.xi + self.beta[0] * np.random.standard_normal(self.shape)
+		u_hat = self.C(xi_hat)
+		m_hat = self.T(u_hat)
+		logProb = min(self.phi(self.m, data) - self.phi(m_hat, data), 0) * self.Temperature
+		if np.random.rand() <= np.exp(logProb):
+			self.xi = xi_hat
+			self.u = u_hat
+			self.m = m_hat
+		self.beta = update_beta(self.beta[0], np.exp(logProb), .23) , self.beta[1]
+	
+	def _1_layer(self, data):
+		#second layer
+		xi_hat = np.sqrt(1 - self.beta[1]**2) * self.xi_1 + self.beta[1] * np.random.standard_normal(1)
+		h_hat = np.exp(xi_hat)
+		self.C_hat.sigma = h_hat
+		
+		logProb = self.phi(self.T(self.C(self.xi)), data) - self.phi(self.T(self.C_hat(self.xi)), data)
+		logProb += log_acceptance_ratio(self.xi_1, xi_hat, self.beta[1], self.C_2)
+		logProb = min(logProb, 0)  * self.Temperature
+		if np.random.rand() <= np.exp(logProb):
+			self.xi_1 = xi_hat
+			h = h_hat
+			self.C.sigma = h
+		self.beta = self.beta[0], update_beta(self.beta[1], np.exp(logProb), .23)
 
-ax[0,1].plot(betas)
+	def sample(self, data, niter = 10000):
+		i=0
+		while i <= niter:
+			i+=1
+			self._0_layer(data)
+			self._1_layer(data)
+			self.samples.append((self.u, self.C.sigma))
+			self.betas.append(self.beta)
+			# Kill chain if it does not converge
+			if i%1000==0:
+				if min(self.beta) < 0.05:
+					self.Temperature /= 2
+					self.samples = []
+					self.betas = []
+					i = 0
+				if max(self.beta) > 0.95:
+					self.Temperature *= 2
+					self.samples = []
+					self.betas = []
+					i = 0
+				print(i, 'Beta: ', self.beta)
+		self.reconstruction = np.mean([s[0] for s in self.samples], axis = 0)
+		self.var = np.var([s[0] for s in self.samples], axis = 0)
+		self.heightscale = np.mean([s[1] for s in self.samples], axis = 0)
 
-ax[1,0].plot([x[1] for x in samples])
-ax[1,1].hist([x[1] for x in samples])
 
-plt.show()
+if __name__=='__main__':	
+	image_path = Path('data/test.png')
+	size = 20
+	image = dataLoading.import_image(image_path, size=size)
+
+	ndim = image.ndim
+	shape = (size,)*ndim
+
+	C = CovOp(ndim, size, sigma=np.ones((size,)*ndim), ro=.02)
+
+	means = np.array([
+		(.25, .25),	(.25, .5), (.25, .75),
+		(.5, .25), (.5, .5), (.5, .75),
+		(.75, .25), (.75, .5), (.75, .75),
+	])
+	# T = mDevice([mOp(ndim, size, mean, sigma=.01) for mean in means])
+	T = RadonTransform(ndim, size, np.linspace(0, 180, 10))
+
+	# data = [-30, 20, 0] #
+	data = T(image)
+	data += .1 * np.random.standard_normal(data.shape)
+	fbp = T.inv(data)
+	print('Shape of Data:', data.shape, end='	\n')
+
+	chain = wpCN(ndim, size, C, T)
+
+	chain.sample(data, 10000)
+	plotting.plot_result_2d(image, chain, means, C, size, data, fbp)
+	# plt.imshow(chain.reconstruction)
+	plt.plot([b[0] for b in chain.betas])
+	plt.plot([b[1] for b in chain.betas])
+	plt.show()
+	# plt.plot(chain.reconstruction - chain.var, 'g--')
