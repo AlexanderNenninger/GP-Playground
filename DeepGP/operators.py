@@ -107,7 +107,7 @@ class RadonTransform(object):
     def __call__(self, x):
         return radon(x, theta=self.theta, circle=False)
     def inv(self, x):
-        return iradon(x, self.theta)
+        return iradon(x, self.theta, circle=False)
 
 if __name__=='__main__':
     import matplotlib.pyplot as plt

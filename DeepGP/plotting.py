@@ -20,7 +20,7 @@ def plot_result_2d(image, chain, means, C, size, data, fbb):
     ax[1,0].imshow(chain.reconstruction)
     ax[1,0].set_title('Reconstruction')
     ax[1,1].imshow(np.sqrt(chain.var))
-    ax[1,2].imshow(chain.heightscale)
+    ax[1,2].plot([s[1] for s in chain.samples])
     ax[1,3].plot(chain.betas)
     plt.show()
 
