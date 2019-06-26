@@ -5,6 +5,9 @@ Define Operators. mOp is for taking measurements, CovOp is for mapping to the ri
 '''
 class mOp(object):
     'F([0,1]^ndim) -> R'
+    def f(self, x):
+        return np.exp(-x**2/self.sigma**2/2)
+
     def __init__(self, ndim, size, mean, sigma=1):
         self.tensor_cached = False
         self.ndim = ndim
@@ -12,8 +15,6 @@ class mOp(object):
         self.size = size
         self.sigma = sigma
         self.mean = mean
-        self.f = lambda x: np.exp(-x**2/sigma**2/2)
-
         self.F = np.zeros(self.shape)
         self.update_tensor()
 
@@ -39,7 +40,10 @@ class mOp(object):
 
 
 class CovOp(object):
-    'L_p[0,1]^ndim->L_p[0,1]^ndim'
+    'F[0,1]^ndim->C[0,1]^ndim'
+    def f(self, r):
+        return (1 + np.sqrt(3)*r / self.ro) * np.exp(-np.sqrt(3) * r / self.ro)
+    
     def __init__(self, ndim, size, sigma=1, ro=1):
         self.tensor_cached = False
         self.inverse_cached = False
@@ -49,8 +53,7 @@ class CovOp(object):
         self.C = np.zeros(self.shape)
         self.Inv = np.zeros(self.shape)
         self.ro = ro * size
-        self.sigma = sigma
-        self.f = lambda r: (1 + np.sqrt(3)*r / self.ro) * np.exp(-np.sqrt(3) * r / self.ro)
+        self.sigma = sigma      
         self.update_tensor()
         self.update_inverse()
 	

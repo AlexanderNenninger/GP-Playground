@@ -24,6 +24,9 @@ After Thesis (maybe):
 '''
 import copy
 from pathlib import Path
+import time
+from datetime import datetime
+import pickle
 
 import numpy as np
 from matplotlib import pyplot as plt
@@ -40,7 +43,9 @@ def update_beta(beta, acc_prob, target):
 	return np.clip(beta, 2**(-15), 1-2**(-15))
 
 class wpCN(object):
-	
+	def phi(self, x, y):
+		return np.sum((x-y)**2) * self.dx
+
 	def __init__(self, ndim, size, Covariance: CovOp, T: mDevice):
 		self.data = data
 		self.ndim = ndim
@@ -52,8 +57,6 @@ class wpCN(object):
 		self.T = T
 
 		self.dx = 1/T.len
-		self.phi = lambda x, y: np.sum((x-y)**2) * self.dx
-		
 		self.xi = np.random.standard_normal(shape)
 		self.u = C(self.xi)
 		self.m = T(self.u)
@@ -97,6 +100,7 @@ class wpCN(object):
 		self.beta = self.beta[0], update_beta(self.beta[1], np.exp(logProb), .23)
 
 	def sample(self, data, niter = 10000):
+		t_start = time.time()
 		i=0
 		while i <= niter:
 			i+=1
@@ -110,15 +114,20 @@ class wpCN(object):
 					self.Temperature /= 2
 					self.samples = []
 					self.betas = []
+					self.beta = (.5,.5)
 					print('Temperature decreased to: ', self.Temperature)
 					i = 0
 				if max(self.beta) > 0.95:
 					self.Temperature *= 2
 					self.samples = []
 					self.betas = []
+					self.beta = (.5,.5)
 					print('Temperature increased to: ', self.Temperature)
 					i = 0
 				print(i, 'Beta: ', self.beta)
+		t_end = time.time()
+		self.t_delta = (t_end - t_start)
+		print('#Samples:%s, Time: %ss'%(niter, self.t_delta))
 		self.reconstruction = np.mean([s[0] for s in self.samples], axis = 0)
 		self.var = np.var([s[0] for s in self.samples], axis = 0)
 		self.heightscale = np.mean([s[1] for s in self.samples], axis = 0)
@@ -126,23 +135,21 @@ class wpCN(object):
 
 if __name__=='__main__':	
 	image_path = Path('data/phantom.png')
-	size = 20
+	size = 15
 	image = dataLoading.import_image(image_path, size=size)
 
 	ndim = image.ndim
 	shape = (size,)*ndim
 
-	C = CovOp(ndim, size, sigma=np.ones((size,)*ndim), ro=.03)
+	C = CovOp(ndim, size, sigma=np.ones((size,)*ndim), ro=.02)
 
 	means = np.array([
 		(.25, .25),	(.25, .5), (.25, .75),
 		(.5, .25), (.5, .5), (.5, .75),
 		(.75, .25), (.75, .5), (.75, .75),
 	])
-	# T = mDevice([mOp(ndim, size, mean, sigma=.01) for mean in means])
 	T = RadonTransform(ndim, size, np.linspace(0, 180, 10))
 
-	# data = [-30, 20, 0] #
 	data = T(image)
 	data += .1 * np.random.standard_normal(data.shape)
 	fbp = T.inv(data)
@@ -150,10 +157,14 @@ if __name__=='__main__':
 
 	chain = wpCN(ndim, size, C, T)
 
-	chain.sample(data, 50000)
+	n_iter = 1000
+	chain.sample(data, n_iter)
+
+	f_name = '%s_n.pkl'%datetime.now().replace(microsecond=0).isoformat().replace(':','-') + str(n_iter)
+	with open(f_name, 'wb') as f:
+		pickle.dump(chain, f)
+
 	plotting.plot_result_2d(image, chain, means, C, size, data, fbp)
-	# plt.imshow(chain.reconstruction)
 	plt.plot([b[0] for b in chain.betas])
 	plt.plot([b[1] for b in chain.betas])
 	plt.show()
-	# plt.plot(chain.reconstruction - chain.var, 'g--')
