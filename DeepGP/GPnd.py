@@ -104,17 +104,19 @@ class wpCN(object):
 			self._1_layer(data)
 			self.samples.append((self.u, self.C.sigma))
 			self.betas.append(self.beta)
-			# Kill chain if it does not converge
+			# Kill chain if beta leaves a sensible region
 			if i%1000==0:
 				if min(self.beta) < 0.05:
 					self.Temperature /= 2
 					self.samples = []
 					self.betas = []
+					print('Temperature decreased to: ', self.Temperature)
 					i = 0
 				if max(self.beta) > 0.95:
 					self.Temperature *= 2
 					self.samples = []
 					self.betas = []
+					print('Temperature increased to: ', self.Temperature)
 					i = 0
 				print(i, 'Beta: ', self.beta)
 		self.reconstruction = np.mean([s[0] for s in self.samples], axis = 0)
@@ -123,14 +125,14 @@ class wpCN(object):
 
 
 if __name__=='__main__':	
-	image_path = Path('data/test.png')
+	image_path = Path('data/phantom.png')
 	size = 20
 	image = dataLoading.import_image(image_path, size=size)
 
 	ndim = image.ndim
 	shape = (size,)*ndim
 
-	C = CovOp(ndim, size, sigma=np.ones((size,)*ndim), ro=.02)
+	C = CovOp(ndim, size, sigma=np.ones((size,)*ndim), ro=.03)
 
 	means = np.array([
 		(.25, .25),	(.25, .5), (.25, .75),
@@ -148,7 +150,7 @@ if __name__=='__main__':
 
 	chain = wpCN(ndim, size, C, T)
 
-	chain.sample(data, 10000)
+	chain.sample(data, 50000)
 	plotting.plot_result_2d(image, chain, means, C, size, data, fbp)
 	# plt.imshow(chain.reconstruction)
 	plt.plot([b[0] for b in chain.betas])
